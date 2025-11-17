@@ -89,7 +89,7 @@ class Core
 
   assignName: (name, obj) ->
     if @isObject obj
-      @objectNames[name] = obj._id
+      @objectNames[name] = obj
       obj._name ?= name
 
   deassignName: (name) ->
@@ -105,7 +105,7 @@ class Core
       when 'string' is typeof ref
         return switch ref[0]
           when '#' then @objectIDs[ref[1..]]
-          when '$' then @objectIDs[@objectNames[ref[1..]]]
+          when '$' then @objectNames[ref[1..]]
           else null
 
       when 'number' is typeof ref
