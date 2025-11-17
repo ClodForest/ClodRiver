@@ -56,7 +56,7 @@ NPCs observe continuous event streams and decide when to participate:
 - Tier 1: Lightweight LLM semantic scoring (100-200ms)
 - Tier 2: Full response generation when relevant (500-1500ms)
 
-**Result:** NPCs that feel alive, speaking when appropriate rather than on every event.
+**Result:** NPCs that feel alive, acting and speaking when appropriate rather than on every event.
 
 ### 2. LLM-Fronted Parser (from IntelligentSystems.md)
 Natural language commands translated to game actions:
@@ -79,13 +79,13 @@ NPCs don't just describe locations—they manifest them:
 
 ### Server Responsibilities
 - Network layer (telnet, eventually SSH/HTTPS)
-- Session management
 - Object lifecycle (create, load, save, destroy)
 - Method dispatch with ColdMUD semantics
 - Persistence (event log + snapshots + text dumps)
 - LLM integration (parser, NPC scorer, prose enhancer)
 
 ### Core Responsibilities
+- Session management
 - World logic and game rules
 - Object definitions (rooms, players, things)
 - Verb system (command → method mapping)
