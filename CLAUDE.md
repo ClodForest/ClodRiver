@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ClodRiver is a modern MUD (Multi-User Dungeon) server written in Node.js/CoffeeScript that integrates Large Language Models for natural language parsing, dynamic world building, and intelligent NPC behavior. The project takes inspiration from ColdMUD's elegant design while leveraging modern JavaScript/CoffeeScript capabilities.
 
-**Current Status:** Object model design phase - implementing Core and CoreObject with nested function import pattern.
+**Current Status:** Validating object model implementation - Core, CoreObject, and ExecutionContext classes implementing v3.0 design.
 
 ## Language and Style
 
@@ -24,10 +24,11 @@ See `docs/00-ObjectModel.md` for complete specification. Key points:
 ```coffee
 class CoreObject
   constructor: (@_id, parent = null) ->
-    @_name = null
     @_state = {}
     Object.setPrototypeOf(this, parent) if parent?
 ```
+
+**Note:** Removed `@_name` - names are managed by Core.objectNames, not stored on objects.
 
 **Important:** All objects are instances of CoreObject:
 - `$root.constructor === $thing.constructor === CoreObject`
@@ -80,67 +81,91 @@ class Core
   create: (parent = null) ->
     # Creates CoreObject with sequential ID
 
-  assignName: (name, obj) ->
-    # Register object with name
-    # objectNames[name] = obj (not obj._id)
-    # Sets obj._name if not already set
+  destroy: (ref) ->
+    # Removes object from both objectIDs and objectNames
 
-  resolve: (ref) ->
+  add_obj_name: (name, obj) ->
+    # Register object with name: objectNames[name] = obj
+
+  del_obj_name: (name) ->
+    # Remove name registration
+
+  toobj: (ref) ->
     # Resolves '$name', '#id', number, or {$ref: id}
+    # Returns object or null
 
-  call: (obj, method, args = []) ->
-    # Entry point from server - creates ctx
+  addMethod: (obj, methodName, fn) ->
+    # Adds method to object, sets fn.definer and fn.methodName
 
-  # Note: Core.$ removed - use objectNames directly
+  delMethod: (obj, methodName) ->
+    # Removes method from object
+
+  call: (obj, methodName, args = []) ->
+    # Entry point from server - creates ExecutionContext
 ```
 
-### Execution Context (ctx)
+### ExecutionContext
 
-The ctx object provides execution environment:
+Implemented in `lib/execution-context.coffee`, provides execution environment:
 
 ```coffee
-ctx = {
-  core:     coreInstance
-  _stack:   [...]
-  _definer: currentDefiner
-  _caller:  previousObject
-  _sender:  previousDefiner
+class ExecutionContext
+  constructor: (@core, @obj, @method, @parent = null) ->
+    @definer = @method.definer
+    @stack   = if @parent then [@parent.stack..., @parent.obj] else []
 
-  # Builtins (based on method imports)
-  get:      (key) -> obj._state[definer._id]?[key]
-  set:      (data) -> ...
-  send:     (target, method, args) -> ...
-}
+  # State access (definer's namespace)
+  get: (key) ->
+    @obj._state[@definer._id]?[key]
+
+  set: (data) ->
+    @obj._state[@definer._id] ?= {}
+    Object.assign @obj._state[@definer._id], data
+    @obj
+
+  # ColdMUD builtins
+  this:    -> @obj
+  definer: -> @definer
+  caller:  -> @parent?.obj or null
+  sender:  -> @parent?.definer or null
+
+  # Method dispatch
+  send: (target, methodName, args...) ->
+    # Resolves target, finds method, creates child context
+    # Updates call stack automatically
+
+  pass: (args...) ->
+    # Calls parent's implementation with parent context
 ```
 
 ### Method Dispatch
 
-- `Core.call(obj, method, args)` - Entry point from server
-- `ctx.send(target, method, args)` - Object-to-object calls within methods
-- `send` updates call stack and manages definer/caller/sender tracking
+- `core.call(obj, methodName, args)` - Entry point from server, creates root ExecutionContext
+- `ctx.send(target, methodName, args)` - Object-to-object calls, creates child ExecutionContext
+- `ctx.pass(args)` - Call parent implementation, preserves call stack
+- Call stack tracked automatically through ExecutionContext parent chain
 
 ## Directory Structure
 
 ```
 ClodRiver/
 ├── docs/
-│   ├── 00-ObjectModel.md       # Current object model spec (PRIMARY)
-│   ├── 00-ProjectVision.md     # Project goals
-│   ├── 01-Architecture.md      # Server/Core architecture
-│   ├── 02-DesignDecisions.md   # Design rationale
-│   ├── 03-ObjectModel.md       # Earlier iteration (superseded)
+│   ├── 00-ObjectModel.md          # Current object model spec (PRIMARY)
+│   ├── 00-ProjectVision.md        # Project goals
+│   ├── 01-Architecture.md         # Server/Core architecture
+│   ├── 02-DesignDecisions.md      # Design rationale
+│   ├── 03-ObjectModel.md          # Earlier iteration (superseded)
 │   ├── 04-ObjectModel-Revised.md  # Earlier iteration (superseded)
-│   └── 05-ObjectModel.md       # Earlier iteration (superseded)
+│   └── 05-ObjectModel.md          # Earlier iteration (superseded)
 ├── lib/
-│   ├── core.coffee             # Core class (needs rewrite)
-│   └── core_object.coffee      # CoreObject class (needs rewrite)
+│   ├── core.coffee                # Core class - object system management
+│   ├── core-object.coffee         # CoreObject class - minimal object structure
+│   └── execution-context.coffee   # ExecutionContext - method execution environment
 ├── t/
-│   ├── core.coffee             # Core tests (needs update)
-│   └── core_object.coffee      # CoreObject tests (needs update)
+│   ├── core.coffee                # Core tests (needs update)
+│   └── core-object.coffee         # CoreObject tests (needs update)
 └── package.json
 ```
-
-**Note:** `lib/core*.coffee` were written before nested function import pattern was designed. They need to be rewritten based on `docs/00-ObjectModel.md`.
 
 ## Key Design Decisions
 
@@ -159,10 +184,10 @@ Removed `Core.$` namespace as redundant:
 - Methods can import `$name` directly
 - `add_methods` checks if import matches a registered name
 
-### assignName vs registerDollar
+### add_obj_name vs assignName
 Renamed for clarity:
-- `assignName(name, obj)` - registers name
-- `deassignName(name)` - removes name
+- `add_obj_name(name, obj)` - registers name in objectNames
+- `del_obj_name(name)` - removes name registration
 - Can assign multiple names to same object
 
 ## CoffeeScript Notation
@@ -180,22 +205,22 @@ send obj::method     # Call method via prototype chain
 
 ```coffee
 # sword.coffee
-module.exports = (Core) ->
-  $thing = Core.resolve '$thing'
+module.exports = (core) ->
+  $thing = core.toobj '$thing'
 
-  $sword = Core.create($thing)
-  Core.assignName 'sword', $sword
+  $sword = core.create $thing
+  core.add_obj_name 'sword', $sword
 
   $sword._state = {
     1:  {name: 'sword'}
     41: {damage: 'd6', weight: 5}
   }
 
-  Core.addMethod $sword, 'swing',
+  core.addMethod $sword, 'swing',
     (get, send) ->
       ([target]) ->
         damage = get 'damage'
-        send target::take_damage, damage
+        send target, 'take_damage', damage
 
   $sword
 ```
@@ -215,26 +240,28 @@ Tests register CoffeeScript via `node -r coffeescript/register`.
 
 - **All objects are CoreObject instances** - No class-per-instance
 - **State is class-namespaced** - Prevents inheritance conflicts
-- **Methods declare imports** - Nested function pattern
-- **ctx manages execution** - Call stack, builtins, definer tracking
+- **Methods declare imports** - Nested function pattern (planned for v2)
+- **ExecutionContext manages execution** - Call stack, builtins, definer tracking
+- **Deep serialization** - Object references handled at any depth in state
 - **No comments in code** - Self-documenting preferred
 
 ## Current Implementation Status
 
-- ✅ package.json configured
-- ✅ lib/core_object.coffee created (needs rewrite for v3.0)
-- ✅ lib/core.coffee created (needs rewrite for v3.0)
-- ✅ t/core_object.coffee created (needs update)
-- ✅ t/core.coffee created (needs update)
-- ✅ docs/00-ObjectModel.md - primary specification (in review)
-- 🔄 Tests run but fail (implementation doesn't match v3.0 design)
+- ✅ package.json configured for CoffeeScript testing
+- ✅ docs/00-ObjectModel.md - finalized v3.0 specification
+- ✅ lib/core-object.coffee - CoreObject with deep serialization
+- ✅ lib/execution-context.coffee - ExecutionContext with send/pass
+- ✅ lib/core.coffee - Core with toobj, add_obj_name, method management
+- 🔄 t/core-object.coffee - needs update for v3.0 API
+- 🔄 t/core.coffee - needs update for v3.0 API (ExecutionContext, renamed methods)
+- 📋 Tests need to run to validate implementation
 
-**Next:** Rewrite core*.coffee and tests based on docs/00-ObjectModel.md after Robert finishes review.
+**Next:** Update tests and run them to validate the object model implementation.
 
 ## Related Documentation
 
 Primary docs (in order of importance):
-1. `docs/00-ObjectModel.md` - Current object model (PRIMARY - being reviewed)
+1. `docs/00-ObjectModel.md` - Current object model v3.0 (PRIMARY - finalized)
 2. `docs/00-ProjectVision.md` - Project goals and philosophy
 3. `docs/01-Architecture.md` - Server/Core two-tier architecture
 4. `docs/02-DesignDecisions.md` - Design rationale
