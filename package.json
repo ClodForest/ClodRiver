@@ -1,0 +1,25 @@
+{
+  "name": "clodriver",
+  "version": "0.1.0",
+  "description": "AI-powered MUD server with ColdMUD-inspired design",
+  "main": "lib/server.coffee",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node -r coffeescript/register --test 't/**/*.coffee'",
+    "test:watch": "node -r coffeescript/register --test --watch 't/**/*.coffee'"
+  },
+  "keywords": [
+    "mud",
+    "llm",
+    "ai",
+    "coldmud"
+  ],
+  "author": "Robert de Forest <robert@defore.st>",
+  "license": "MIT",
+  "dependencies": {
+    "coffeescript": "^2.7.0"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}
