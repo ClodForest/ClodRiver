@@ -1,0 +1,99 @@
+# 'VR' extensions on ClodMUD
+# v0.0.0
+# Simplistic MUD/Zork-like mechanics
+# vim: ft=coffee
+
+# $vr: common parent for objects defined by this module
+object
+parent $root
+name vr
+
+# $decoartors: management class for $decorator and $decorated
+object
+parent $vr
+name decorators
+
+method init_decorators
+  using get, set
+
+  # Master list of all known decorators, indexed by root_name
+  if not get 'decorators'
+    set decorators: {}
+
+method add_decorator_methods
+  using send
+  args target, decorator
+
+
+# $decorated: something which can be extended by adding decoration objects
+object
+parent $vr
+name decorated
+
+method init_decorated
+  disallow overrides
+  using set, sender, caller
+
+  if sender() is this and caller is $root
+    set decorators: []
+  else
+    throw 'permissions'
+
+method add_decoration
+  using get, set, send
+  args decoration
+
+  for methodName of decoration.exports
+    if found = send $decorators.lookup_method, @, methodName
+      if found.decoration
+        definerName = send found.decoration.root_name
+        throw new Error "Method '#{method}' already defined on #{send @root_name} by decorator #{definerName}"
+      else
+        name = send found.definer.root_name
+        throw new Error "Method '#{method}' already defined on #{send @root_name} by class #{name}"
+
+  set decorations: [get('decorations')..., decoration]
+
+  for name, fn of decoration.exports
+    @[name] = fn
+
+method has_decoration
+  using get, findLastIndex
+  args decoration
+
+  decorations = get 'decorations'
+
+  if -1 is idx = findLastIndex decorations, decoration
+    false
+  else
+    idx
+
+method rm_decoration
+  using set, get, send, findLastIndex
+  args decoration
+
+  if 'number' is typeof idx = send @has_decoration decoration
+    
+
+  if idx is -1
+    return
+
+
+object
+parent $vr
+name decoration
+
+method init_decoration
+  using get, set, sender, caller
+
+  if sender isnt this or caller isnt $root
+    throw "permissions"
+
+  if not get 'exports'
+    set exports: {}
+
+method set_exported
+  using get, set
+  args methodName, isExported = true
+
+

@@ -1,0 +1,42 @@
+#!/usr/bin/env coffee
+
+{spawn} = require 'node:child_process'
+path    = require 'node:path'
+fs      = require 'node:fs'
+
+rootDir = path.resolve __dirname, '..'
+logsDir = path.join rootDir, 'logs'
+pidFile = path.join rootDir, 'clodriver.pid'
+logFile = path.join logsDir, 'clodriver.log'
+
+fs.mkdirSync logsDir, {recursive: true} unless fs.existsSync logsDir
+
+if fs.existsSync pidFile
+  pid = parseInt fs.readFileSync(pidFile, 'utf8').trim()
+
+  try
+    process.kill pid, 0
+    console.log "ClodRiver already running (PID #{pid})"
+    process.exit 1
+  catch
+    console.log "Removing stale PID file"
+    fs.unlinkSync pidFile
+
+serverPath = path.join rootDir, 'bin', 'server'
+
+serverProc = spawn serverPath, [], {
+  detached: true
+  stdio:    ['ignore', 'pipe', 'pipe']
+  cwd:      rootDir
+}
+
+logStream = fs.createWriteStream logFile, {flags: 'a'}
+serverProc.stdout.pipe logStream
+serverProc.stderr.pipe logStream
+
+fs.writeFileSync pidFile, "#{serverProc.pid}\n"
+
+serverProc.unref()
+
+console.log "ClodRiver started (PID #{serverProc.pid})"
+console.log "Logs: #{logFile}"

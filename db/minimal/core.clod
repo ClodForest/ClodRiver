@@ -1,7 +1,9 @@
 # Minimal ClodMUD core v0.0.0
 # Straight from the top of the dome of Robert de Forest <robert@defore.st>
+# vim: ft=coffee
 
 object 0
+parent 1
 name sys
 
 method create
@@ -15,6 +17,13 @@ method create
     send newObj.root_name, name
 
   newObj
+
+method add_methods
+  using add_method
+  args target, namesAndMethods
+
+  for name, method of namesAndMethods
+    add_method target, name, method
 
 method add_obj_name
   using add_obj_name
@@ -52,6 +61,39 @@ method spawn_listener
 object 1
 name root
 
+method eval_on
+  using $sys, send, compile
+  args code, definer = this
+
+  fn = compile code
+  fn.definer = definer
+
+  prefix = "eval_temp_"
+  fnNumber = 0
+  fnNumber++ while 'function' is typeof @[name = prefix + fnNumber]
+  fn.name = name
+
+  try
+    $sys.add_methods this, [name]: fn
+    result = send @[name]
+
+  finally
+    $sys.rm_method this, fn
+
+  return result
+
+
+method children
+  using children
+
+  return children()
+
+
+method descendents
+  using children
+
+  children().concat (children().map (child) -> send child.descendents)...
+
 method lookup_method
   disallow overrides
   using lookup_method
@@ -87,7 +129,7 @@ method spawn
   send $sys.create, @
 
 method root_name
-  using send, set, get, $sys, @
+  using send, set, get, $sys, @, toint
   args newName
 
   if newName
@@ -97,7 +139,10 @@ method root_name
     send $sys.add_obj_name, @, newName
     set {name: newName}
   else
-    get 'name'
+    if name = get 'name'
+      return name
+
+    '#' + toint(@)
 
 
 object 2
