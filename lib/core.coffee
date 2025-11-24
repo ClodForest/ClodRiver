@@ -7,10 +7,22 @@ class Core
     @objectNames = {}
     @nextId      = 0
 
-  create: (parent = null) ->
+    sys  = @create null, 'sys'
+    root = @create null, 'root'
+
+    @change_parent sys, root
+
+  create: (parent = null, name) ->
     id = @nextId++
 
-    @objectIDs[id] = new CoreObject id, parent
+    o = @objectIDs[id] = new CoreObject id, parent
+
+    if name
+      @add_obj_name name, o
+
+    return o
+
+  change_parent: (child, parent) ->
 
   destroy: (ref) ->
     return unless obj = @toobj ref
@@ -53,8 +65,12 @@ class Core
     obj[methodName].methodName = methodName
     obj[methodName].source = source if source?
 
+  add_method: Core::addMethod
+
   delMethod: (obj, methodName) ->
     delete obj[methodName]
+
+  del_method: Core::delMethod
 
   freeze: ->
     parentMap = {}
@@ -103,6 +119,9 @@ class Core
     src = src.replace /;\s*\}$/, ''
     src
 
+  change_parent: (child, parent) ->
+    Object.setPrototypeOf child, parent if parent?
+
   thaw: (frozen, opts = {}) ->
     @nextId      = frozen.nextId
     @objectIDs   = {}
@@ -114,7 +133,8 @@ class Core
     for id, parentId of frozen.parentMap
       child  = @objectIDs[id]
       parent = @objectIDs[parentId]
-      Object.setPrototypeOf child, parent if parent?
+
+      @change_parent child, parent if parent?
 
     resolver = (id) => @objectIDs[id] or null
 
@@ -139,7 +159,13 @@ class Core
     this
 
   call: (obj, methodName, args = []) ->
-    method = @_findMethod obj, methodName
+    if arguments.length is 2 and 'function' is typeof obj
+      method     = obj
+      args       = methodName
+      methodName = method.name
+    else
+      method     = @_findMethod obj, methodName
+
     return null unless method?
 
     ctx = new ExecutionContext this, obj, method
