@@ -133,9 +133,22 @@ class Compiler
       lines.push "    [#{methodDef.argsRaw}] = args"
       lines.push ""
 
-    # Method body (indent by 4 spaces)
+    # Detect minimum indentation in body
+    minIndent = Infinity
     for bodyLine in methodDef.body
-      lines.push "    #{bodyLine}"
+      continue if bodyLine.trim() is ''
+      indent = bodyLine.match(/^(\s*)/)[1].length
+      minIndent = Math.min minIndent, indent
+
+    minIndent = 0 if minIndent is Infinity
+
+    # Method body - strip source indent and add 4 spaces
+    for bodyLine in methodDef.body
+      if bodyLine.trim() is ''
+        lines.push ''
+      else
+        stripped = bodyLine.substring minIndent
+        lines.push "    #{stripped}"
 
     lines.join '\n'
 

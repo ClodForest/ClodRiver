@@ -1,8 +1,9 @@
-net      = require 'node:net'
-fs       = require 'node:fs'
+net        = require 'node:net'
+fs         = require 'node:fs'
+CoffeeScript = require 'coffeescript'
 
-Core     = require './core'
-Compiler = require './compiler'
+Core       = require './core'
+Compiler   = require './compiler'
 
 class Server
   constructor: ->
@@ -14,9 +15,10 @@ class Server
     source = fs.readFileSync corePath, 'utf8'
 
     @compiler.compile source
-    code = @compiler.generate()
+    coffeeCode = @compiler.generate()
 
-    bootstrapFn = new Function 'core', code
+    jsCode = CoffeeScript.compile coffeeCode, {bare: true, inlineMap: true}
+    bootstrapFn = new Function 'core', jsCode
     bootstrapFn.call @core, @core
 
     @core

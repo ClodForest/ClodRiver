@@ -103,7 +103,7 @@ method lookup_method
 
 method init
   disallow overrides
-  using toint, send, sender, @
+  using toint, send, sender
 
   if sender isnt @
     throw "perm"
@@ -129,7 +129,7 @@ method spawn
   send $sys.create, @
 
 method root_name
-  using send, set, get, $sys, @, toint
+  using send, set, get, $sys, toint
   args newName
 
   if newName
@@ -154,7 +154,7 @@ method spawn
   send $sys.create, @
 
 method data
-  using emit, send, $admin, get, set, @
+  using emit, send, $admin, get, set
   args buf
 
   if not @buf
@@ -183,14 +183,14 @@ object 3
 name admin
 
 method receive_line
-  using send, eval, stringify, @
+  using send, clod_eval, tostr
   args s
 
-  result = eval s
-  send @notify, "=> #{stringify result}"
+  result = clod_eval s
+  send @notify, "=> #{tostr result}"
 
 method notify
-  using send, get, @
+  using send, get
   args s
 
   connection = get 'connection'

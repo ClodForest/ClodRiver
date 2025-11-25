@@ -193,3 +193,75 @@ describe 'Compiler', ->
       -> compiler.compile source
       /method outside object definition/
     )
+
+  it 'generates correct indentation for method body', ->
+    compiler = new Compiler()
+
+    source = '''
+object 0
+parent 1
+name sys
+
+method create
+  using create, $root, send, add_obj_name
+  args parent = $root, name
+
+  newObj = create parent
+
+  if typeof name is 'string' and name isnt ''
+    add_obj_name name, newObj
+    send newObj.root_name, name
+
+  newObj
+'''
+
+    compiler.compile source
+    generated = compiler.generate()
+
+    lines = generated.split '\n'
+
+    # Find the method body lines (after args destructuring)
+    bodyStartIdx = lines.findIndex (l) -> l.includes 'newObj = create parent'
+    assert.ok bodyStartIdx > 0, 'Should find method body'
+
+    # Check that method body lines have exactly 4 spaces of indent
+    bodyLine = lines[bodyStartIdx]
+    assert.match bodyLine, /^    [^ ]/, 'Method body should have 4 spaces indent, not more'
+    assert.match bodyLine, /^    newObj = create parent$/, 'First body line should be correctly indented'
+
+    # Check the if statement is also at 4 spaces
+    ifLineIdx = lines.findIndex (l) -> l.includes "if typeof name"
+    assert.ok ifLineIdx > bodyStartIdx, 'Should find if statement'
+    ifLine = lines[ifLineIdx]
+    assert.match ifLine, /^    if typeof name/, 'If statement should have 4 spaces indent'
+
+  it 'preserves relative indentation in method body', ->
+    compiler = new Compiler()
+
+    source = '''
+object 0
+name test
+
+method foo
+  args x
+
+  if x > 0
+    return x
+  else
+    return 0
+'''
+
+    compiler.compile source
+    generated = compiler.generate()
+    lines = generated.split '\n'
+
+    # Find the if and return statements
+    ifLineIdx = lines.findIndex (l) -> l.includes 'if x > 0'
+    returnLineIdx = lines.findIndex (l, i) -> i > ifLineIdx and l.includes 'return x'
+
+    assert.ok ifLineIdx > 0, 'Should find if statement'
+    assert.ok returnLineIdx > ifLineIdx, 'Should find return statement'
+
+    # The if should be at 4 spaces, the return at 6 spaces
+    assert.match lines[ifLineIdx], /^    if x > 0$/, 'If should have 4 spaces'
+    assert.match lines[returnLineIdx], /^      return x$/, 'Return should have 6 spaces (4 + 2 for block)'
