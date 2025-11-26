@@ -3,15 +3,15 @@ class ExecutionContext
     @_definer = @method.definer
     @stack    = if @parent then [@parent.stack..., @parent.obj] else []
 
-  get: (key) ->
+  cget: (key) ->
     @_definer._state[@_definer._id]?[key]
 
-  set: (data) ->
+  cset: (data) ->
     @_definer._state[@_definer._id] ?= {}
     Object.assign @_definer._state[@_definer._id], data
     @_definer
 
-  this:    -> @obj
+  cthis:   -> @obj
   definer: -> @_definer
   caller:  -> @parent?.obj or null
   sender:  -> @parent?._definer or null
@@ -34,5 +34,15 @@ class ExecutionContext
 
     parentCtx = new ExecutionContext @core, @obj, parentMethod, this
     parentMethod.call @obj, parentCtx, args
+
+  # Network methods that need ctx
+  listen: (listener, options) =>
+    @core.bifs.listen this, listener, options
+
+  accept: (connection) =>
+    @core.bifs.accept this, connection
+
+  emit: (data) =>
+    @core.bifs.emit this, data
 
 module.exports = ExecutionContext

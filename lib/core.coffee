@@ -1,11 +1,13 @@
 CoreObject        = require './core-object'
 ExecutionContext  = require './execution-context'
+BIFs              = require './bifs'
 
 class Core
   constructor: ->
     @objectIDs   = {}
     @objectNames = {}
     @nextId      = 0
+    @bifs        = new BIFs this
 
     sys  = @create null, 'sys'
     root = @create null, 'root'
@@ -171,7 +173,14 @@ class Core
     ctx = new ExecutionContext this, obj, method
 
     try
-      method.call obj, ctx, args
+      # Resolve imports for nested function pattern
+      imports = @_resolveImports method, ctx
+
+      # Call outer function with imports to get inner function
+      innerFn = method.apply obj, imports
+
+      # Call inner function with ctx and args
+      innerFn.call obj, ctx, args
     catch error
       @_handleError obj, methodName, error
       null
@@ -186,6 +195,33 @@ class Core
     else
       null
 
+  _resolveImports: (method, ctx) ->
+    # Extract parameter names from outer function
+    src = method.toString()
+    match = src.match /^(?:function\s*)?\(([^)]*)\)/
+    return [] unless match?
+
+    paramNames = match[1].split(',').map (p) -> p.trim()
+    return [] if paramNames.length is 0 or paramNames[0] is ''
+
+    # Resolve each parameter
+    imports = []
+    for name in paramNames
+      # Check if it's a BIF
+      if @bifs[name]?
+        imports.push @bifs[name]
+      # Check if it's a $name object reference
+      else if name[0] is '$'
+        obj = @toobj name
+        imports.push obj
+      # Check if it's an ExecutionContext builtin
+      else if ctx[name]?
+        imports.push ctx[name]
+      else
+        # Unknown import - pass null or throw?
+        imports.push null
+
+    imports
 
   _handleError: (obj, methodName, error) ->
     console.error "Error in #{obj._id}.#{methodName}:", error.message

@@ -9,9 +9,10 @@ describe 'Core', ->
     core = new Core()
     assert.ok core instanceof Core
 
-  it 'starts with nextId at 0', ->
+  it 'starts with nextId at 2', ->
     core = new Core()
-    assert.strictEqual core.nextId, 0
+    # Core creates $sys and $root in constructor, so nextId starts at 2
+    assert.strictEqual core.nextId, 2
 
   describe 'create', ->
     it 'creates an object with sequential IDs', ->
@@ -20,8 +21,9 @@ describe 'Core', ->
       obj1 = core.create()
       obj2 = core.create()
 
-      assert.strictEqual obj1._id, 0
-      assert.strictEqual obj2._id, 1
+      # Core creates $sys (id 0) and $root (id 1) in constructor
+      assert.strictEqual obj1._id, 2
+      assert.strictEqual obj2._id, 3
 
     it 'creates object with parent', ->
       core = new Core()
@@ -100,7 +102,7 @@ describe 'Core', ->
       core = new Core()
       obj  = core.create()
 
-      fn = (ctx, args) -> 'result'
+      fn = -> (ctx, args) -> 'result'
       core.addMethod obj, 'test', fn
 
       assert.strictEqual obj.test, fn
@@ -109,7 +111,7 @@ describe 'Core', ->
       core = new Core()
       obj  = core.create()
 
-      fn = (ctx, args) -> 'result'
+      fn = -> (ctx, args) -> 'result'
       core.addMethod obj, 'test', fn
 
       assert.strictEqual obj.test.definer, obj
@@ -121,22 +123,24 @@ describe 'Core', ->
       obj    = core.create()
       called = false
 
-      core.addMethod obj, 'test', (ctx, args) ->
-        called = true
-        'result'
+      core.addMethod obj, 'test', ->
+        (ctx, args) ->
+          called = true
+          'result'
 
       result = core.call obj, 'test', []
 
       assert.strictEqual called, true
       assert.strictEqual result, 'result'
 
-    it 'provides ctx.get and ctx.set accessing definer namespace', ->
+    it 'provides ctx.get and ctx.cset accessing definer namespace', ->
       core = new Core()
       obj  = core.create()
 
-      core.addMethod obj, 'test', (ctx, args) ->
-        ctx.set value: 42
-        ctx.get 'value'
+      core.addMethod obj, 'test', (cget, cset) ->
+        (ctx, args) ->
+          cset value: 42
+          cget 'value'
 
       result = core.call obj, 'test', []
 
@@ -149,13 +153,14 @@ describe 'Core', ->
       $root = core.create()
       $sys = core.create $root
 
-      core.addMethod $root, 'name', (ctx, args) ->
-        [name] = args
+      core.addMethod $root, 'name', (cget, cset) ->
+        (ctx, args) ->
+          [name] = args
 
-        if name
-          ctx.set {name}
-        else
-          ctx.get 'name'
+          if name
+            cset {name}
+          else
+            cget 'name'
 
       core.call $root, 'name', ['root']
       core.call $sys,  'name', ['sys']
@@ -168,11 +173,12 @@ describe 'Core', ->
       core = new Core()
       obj  = core.create()
 
-      core.addMethod obj, 'test', (ctx, args) ->
-        this:    ctx.this()
-        definer: ctx.definer()
-        caller:  ctx.caller()
-        sender:  ctx.sender()
+      core.addMethod obj, 'test', (cthis, definer, caller, sender) ->
+        (ctx, args) ->
+          cthis:    cthis()
+          definer: definer()
+          caller:  caller()
+          sender:  sender()
 
       result = core.call obj, 'test', []
 
@@ -185,8 +191,9 @@ describe 'Core', ->
       core = new Core()
       obj  = core.create()
 
-      core.addMethod obj, 'test', (ctx, args) ->
-        args[0] + args[1]
+      core.addMethod obj, 'test', ->
+        (ctx, args) ->
+          args[0] + args[1]
 
       result = core.call obj, 'test', [10, 20]
 
@@ -204,8 +211,9 @@ describe 'Core', ->
       core = new Core()
       obj  = core.create()
 
-      core.addMethod obj, 'test', (ctx, args) ->
-        throw new Error('test error')
+      core.addMethod obj, 'test', ->
+        (ctx, args) ->
+          throw new Error('test error')
 
       result = core.call obj, 'test', []
 
@@ -217,8 +225,9 @@ describe 'Core', ->
       parent = core.create()
       child  = core.create(parent)
 
-      core.addMethod parent, 'inherited', (ctx, args) ->
-        'from parent'
+      core.addMethod parent, 'inherited', ->
+        (ctx, args) ->
+          'from parent'
 
       result = core.call child, 'inherited', []
 
@@ -229,8 +238,8 @@ describe 'Core', ->
       parent = core.create()
       child  = core.create(parent)
 
-      core.addMethod parent, 'test', (ctx, args) -> 'parent'
-      core.addMethod child,  'test', (ctx, args) -> 'child'
+      core.addMethod parent, 'test', -> (ctx, args) -> 'parent'
+      core.addMethod child,  'test', -> (ctx, args) -> 'child'
 
       result = core.call child, 'test', []
 
@@ -244,8 +253,9 @@ describe 'Core', ->
       parent._state[parent._id] = {name: 'parent'}
       child._state[child._id]   = {name: 'child'}
 
-      core.addMethod parent, 'getName', (ctx, args) ->
-        ctx.get 'name'
+      core.addMethod parent, 'getName', (cget) ->
+        (ctx, args) ->
+          cget 'name'
 
       result = core.call child, 'getName', []
 
@@ -257,12 +267,14 @@ describe 'Core', ->
       parent = core.create()
       child  = core.create(parent)
 
-      core.addMethod parent, 'test', (ctx, args) ->
-        'parent: ' + args[0]
+      core.addMethod parent, 'test', ->
+        (ctx, args) ->
+          'parent: ' + args[0]
 
-      core.addMethod child, 'test', (ctx, args) ->
-        parentResult = ctx.pass args[0]
-        'child + ' + parentResult
+      core.addMethod child, 'test', (pass) ->
+        (ctx, args) ->
+          parentResult = pass args[0]
+          'child + ' + parentResult
 
       result = core.call child, 'test', ['value']
 
@@ -272,8 +284,9 @@ describe 'Core', ->
       core = new Core()
       obj  = core.create()
 
-      core.addMethod obj, 'test', (ctx, args) ->
-        ctx.pass()
+      core.addMethod obj, 'test', (pass) ->
+        (ctx, args) ->
+          pass()
 
       result = core.call obj, 'test', []
 
@@ -290,8 +303,9 @@ describe 'Core', ->
       parent._state[parent._id]           = {level: 'parent'}
       child._state[child._id]             = {level: 'child'}
 
-      core.addMethod grandparent, 'getLevel', (ctx, args) ->
-        ctx.get 'level'
+      core.addMethod grandparent, 'getLevel', (cget) ->
+        (ctx, args) ->
+          cget 'level'
 
       result = core.call child, 'getLevel', []
 
@@ -303,14 +317,17 @@ describe 'Core', ->
       parent      = core.create(grandparent)
       child       = core.create(parent)
 
-      core.addMethod grandparent, 'test', (ctx, args) ->
-        'gp'
+      core.addMethod grandparent, 'test', ->
+        (ctx, args) ->
+          'gp'
 
-      core.addMethod parent, 'test', (ctx, args) ->
-        'p+' + ctx.pass()
+      core.addMethod parent, 'test', (pass) ->
+        (ctx, args) ->
+          'p+' + pass()
 
-      core.addMethod child, 'test', (ctx, args) ->
-        'c+' + ctx.pass()
+      core.addMethod child, 'test', (pass) ->
+        (ctx, args) ->
+          'c+' + pass()
 
       result = core.call child, 'test', []
 
@@ -463,8 +480,8 @@ describe 'Core', ->
       obj = core.create()
       obj._state[obj._id] = {value: 10}
 
-      methodSrc = '(ctx, args) -> ctx.get("value") + args[0]'
-      addFn = (ctx, args) -> ctx.get('value') + args[0]
+      methodSrc = '(ctx, args) -> ctx.cget("value") + args[0]'
+      addFn = (ctx, args) -> ctx.cget('value') + args[0]
       core.addMethod obj, 'addToValue', addFn, methodSrc
 
       frozen = core.freeze()
@@ -545,12 +562,12 @@ describe 'Core', ->
       obj = core.create()
       obj._state[obj._id] = {x: 5, y: 10}
 
-      addSrc = '(ctx, args) -> ctx.get("x") + ctx.get("y")'
-      addFn = (ctx, args) -> ctx.get('x') + ctx.get('y')
+      addSrc = '(ctx, args) -> ctx.cget("x") + ctx.cget("y")'
+      addFn = (ctx, args) -> ctx.cget('x') + ctx.cget('y')
       core.addMethod obj, 'add', addFn, addSrc
 
-      mulSrc = '(ctx, args) -> ctx.get("x") * ctx.get("y")'
-      mulFn = (ctx, args) -> ctx.get('x') * ctx.get('y')
+      mulSrc = '(ctx, args) -> ctx.cget("x") * ctx.cget("y")'
+      mulFn = (ctx, args) -> ctx.cget('x') * ctx.cget('y')
       core.addMethod obj, 'multiply', mulFn, mulSrc
 
       frozen = core.freeze()

@@ -24,15 +24,15 @@ if fs.existsSync pidFile
 
 serverPath = path.join rootDir, 'bin', 'server'
 
+logFd = fs.openSync logFile, 'a'
+
 serverProc = spawn serverPath, [], {
   detached: true
-  stdio:    ['ignore', 'pipe', 'pipe']
+  stdio:    ['ignore', logFd, logFd]
   cwd:      rootDir
 }
 
-logStream = fs.createWriteStream logFile, {flags: 'a'}
-serverProc.stdout.pipe logStream
-serverProc.stderr.pipe logStream
+fs.closeSync logFd
 
 fs.writeFileSync pidFile, "#{serverProc.pid}\n"
 
