@@ -2,6 +2,10 @@ CoreObject        = require './core-object'
 CoreMethod        = require './core-method'
 ExecutionContext  = require './execution-context'
 BIFs              = require './bifs'
+{
+  MethodNotFoundError
+  InvalidObjectError
+} = require './errors'
 
 class Core
   constructor: ->
@@ -139,18 +143,22 @@ class Core
 
   call: (obj, methodName, args = []) ->
     coreMethod = @_findMethod obj, methodName
-    return null unless coreMethod?
+    throw new MethodNotFoundError(obj._id, methodName) unless coreMethod?
 
     ctx = new ExecutionContext this, obj, coreMethod
+    coreMethod.invoke this, obj, ctx, args
 
-    try
-      coreMethod.invoke this, obj, ctx, args
-    catch error
-      @_handleError obj, methodName, error
-      null
+  callIfExists: (obj, methodName, args = []) ->
+    coreMethod = @_findMethod obj, methodName
+    unless coreMethod?
+      console.log "Event handler not found: ##{obj._id}.#{methodName}"
+      return null
+
+    ctx = new ExecutionContext this, obj, coreMethod
+    coreMethod.invoke this, obj, ctx, args
 
   _findMethod: (obj, methodName) ->
-    return null unless obj?
+    throw new InvalidObjectError("Cannot find method on null object") unless obj?
     return obj[methodName] if obj[methodName] instanceof CoreMethod
 
     proto = Object.getPrototypeOf(obj)
@@ -158,9 +166,5 @@ class Core
       @_findMethod(proto, methodName)
     else
       null
-
-  _handleError: (obj, methodName, error) ->
-    console.error "Error in #{obj._id}.#{methodName}:", error.message
-    console.error error.stack
 
 module.exports = Core

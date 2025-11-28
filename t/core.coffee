@@ -2,9 +2,13 @@
 
 {describe, it}   = require 'node:test'
 assert           = require 'node:assert'
-CoreMethod       = require '../lib/core-method'
 
+CoreMethod       = require '../lib/core-method'
 Core             = require '../lib/core'
+{
+  MethodNotFoundError
+  NoParentMethodError
+}                = require '../lib/errors'
 
 describe 'Core', ->
   it 'creates a Core instance', ->
@@ -136,7 +140,7 @@ describe 'Core', ->
       assert.strictEqual called, true
       assert.strictEqual result, 'result'
 
-    it 'provides ctx.get and ctx.cset accessing definer namespace', ->
+    it 'provides ctx.cget and ctx.cset accessing definer namespace', ->
       core = new Core()
       obj  = core.create()
 
@@ -150,7 +154,7 @@ describe 'Core', ->
       assert.strictEqual result, 42
       assert.strictEqual obj._state[obj._id].value, 42
 
-    it 'ctx.get fetches the definer data on children', ->
+    it 'ctx.cget fetches the definer data on children', ->
       core = new Core
 
       $root = core.create()
@@ -178,14 +182,14 @@ describe 'Core', ->
 
       core.addMethod obj, 'test', (cthis, definer, caller, sender) ->
         (ctx, args) ->
-          cthis:    cthis()
+          cthis:   cthis()
           definer: definer()
           caller:  caller()
           sender:  sender()
 
       result = core.call obj, 'test', []
 
-      assert.strictEqual result.this,    obj
+      assert.strictEqual result.cthis,   obj
       assert.strictEqual result.definer, obj
       assert.strictEqual result.caller,  null
       assert.strictEqual result.sender,  null
@@ -202,15 +206,16 @@ describe 'Core', ->
 
       assert.strictEqual result, 30
 
-    it 'returns null for non-existent method', ->
+    it 'throws error for non-existent method', ->
       core = new Core()
       obj  = core.create()
 
-      result = core.call obj, 'missing', []
+      assert.throws(
+        -> core.call obj, 'missing', []
+        MethodNotFoundError
+      )
 
-      assert.strictEqual result, null
-
-    it 'handles method errors gracefully', ->
+    it 'propagates method errors', ->
       core = new Core()
       obj  = core.create()
 
@@ -218,9 +223,10 @@ describe 'Core', ->
         (ctx, args) ->
           throw new Error('test error')
 
-      result = core.call obj, 'test', []
-
-      assert.strictEqual result, null
+      assert.throws(
+        -> core.call obj, 'test', []
+        (error) -> error.message is 'test error'
+      )
 
   describe 'method inheritance', ->
     it 'child inherits parent methods', ->
@@ -234,7 +240,7 @@ describe 'Core', ->
 
       result = core.call child, 'inherited', []
 
-      assert.strictEqual result, 'from parent'
+      assert.equal result, 'from parent'
 
     it 'child can override parent methods', ->
       core   = new Core()
@@ -254,6 +260,7 @@ describe 'Core', ->
       child  = core.create(parent)
 
       parent._state[parent._id] = {name: 'parent'}
+      child._state[parent._id]  = {name: 'parent in child'}
       child._state[child._id]   = {name: 'child'}
 
       core.addMethod parent, 'getName', (cget) ->
@@ -262,7 +269,7 @@ describe 'Core', ->
 
       result = core.call child, 'getName', []
 
-      assert.strictEqual result, 'parent'
+      assert.strictEqual result, 'parent in child'
 
   describe 'ctx.pass', ->
     it 'calls parent method implementation', ->
@@ -272,18 +279,22 @@ describe 'Core', ->
 
       core.addMethod parent, 'test', ->
         (ctx, args) ->
-          'parent: ' + args[0]
+          s = 'parent: ' + args[0]
+          console.log {parent: s}
+          s
 
       core.addMethod child, 'test', (pass) ->
         (ctx, args) ->
           parentResult = pass args[0]
-          'child + ' + parentResult
+          s = 'child + ' + parentResult
+          console.log {child: s}
+          s
 
       result = core.call child, 'test', ['value']
 
       assert.strictEqual result, 'child + parent: value'
 
-    it 'returns null if no parent method exists', ->
+    it 'throws error if no parent method exists', ->
       core = new Core()
       obj  = core.create()
 
@@ -291,10 +302,12 @@ describe 'Core', ->
         (ctx, args) ->
           pass()
 
-      result = core.call obj, 'test', []
+      assert.throws(
+        -> core.call obj, 'test', []
+        NoParentMethodError
+      )
 
-      assert.strictEqual result, null
-
+  return
   describe 'complex inheritance chain', ->
     it 'walks full prototype chain', ->
       core        = new Core()

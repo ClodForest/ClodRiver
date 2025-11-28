@@ -5,8 +5,8 @@
   "main": "lib/server.coffee",
   "type": "commonjs",
   "scripts": {
-    "test": "node -r coffeescript/register --test 't/**/*.coffee'",
-    "test:watch": "node -r coffeescript/register --test --watch 't/**/*.coffee'"
+    "test": "node --enable-source-maps -r ./test-setup.js --test 't/**/*.coffee'",
+    "test:watch": "node --enable-source-maps -r ./test-setup.js --test --watch 't/**/*.coffee'"
   },
   "keywords": [
     "mud",
@@ -21,5 +21,8 @@
   },
   "engines": {
     "node": ">=24.0.0"
+  },
+  "devDependencies": {
+    "source-map-support": "^0.5.21"
   }
 }

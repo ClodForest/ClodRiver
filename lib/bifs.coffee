@@ -107,16 +107,16 @@ class BIFs
 
     # Set up socket event handlers
     socket.on 'data', (buf) =>
-      @core.call connection, 'received', [buf]
+      @core.callIfExists connection, 'received', [buf]
 
     socket.on 'close', =>
-      @core.call connection, 'disconnected'
+      @core.callIfExists connection, 'disconnected'
 
     socket.on 'error', (error) ->
       console.error "Socket error:", error
 
     # Call connection.connected
-    @core.call connection, 'connected'
+    @core.callIfExists connection, 'connected'
 
     connection
 

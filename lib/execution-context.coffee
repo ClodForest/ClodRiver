@@ -1,4 +1,10 @@
 CoreMethod = require './core-method'
+{
+  InvalidMethodError
+  InvalidObjectError
+  NoParentMethodError
+  MethodNotFoundError
+} = require './errors'
 
 class ExecutionContext
   constructor: (@core, @obj, @method, @parent = null) ->
@@ -6,39 +12,35 @@ class ExecutionContext
     @stack    = if @parent then [@parent.stack..., @parent.obj] else []
 
   cget: (key) =>
-    @_definer._state[@_definer._id]?[key]
+    @obj._state[@_definer._id]?[key]
 
   cset: (data) =>
-    @_definer._state[@_definer._id] ?= {}
-    Object.assign @_definer._state[@_definer._id], data
-    @_definer
+    @obj._state[@_definer._id] ?= {}
+    Object.assign @obj._state[@_definer._id], data
+    @obj
 
   cthis:   => @obj
   definer: => @_definer
   caller:  => @parent?.obj or null
   sender:  => @parent?._definer or null
 
-  send: (fn, args...) ->
-    return null unless fn?
+  send: (target, methodName, args...) =>
+    throw new InvalidObjectError("Cannot send to null target") unless target?
+    throw new InvalidMethodError("Method name must be a string") unless typeof methodName is 'string'
 
-    if fn instanceof CoreMethod
-      childCtx = new ExecutionContext @core, fn.definer, fn, this
-      fn.invoke @core, fn.definer, childCtx, args
-    else if typeof fn is 'function'
-      # Legacy direct function call (shouldn't happen with CoreMethod)
-      recipient = fn.definer
-      return null unless recipient?
-      childCtx = new ExecutionContext @core, recipient, fn, this
-      fn.call recipient, childCtx, args
-    else
-      null
+    method = @core._findMethod target, methodName
+    throw new MethodNotFoundError(target._id, methodName) unless method?
 
-  pass: (args...) ->
+    childCtx = new ExecutionContext @core, target, method, this
+    method.invoke @core, target, childCtx, args
+
+  pass: (args...) =>
+    throw new Error("ExecutionContext has no definer") if not @_definer
     parent = Object.getPrototypeOf @_definer
-    return null if parent is Object.prototype
+    throw new NoParentMethodError(@obj._id, @method.name) if parent is Object.prototype
 
     parentMethod = @core._findMethod parent, @method.name
-    return null unless parentMethod?
+    throw new NoParentMethodError(@obj._id, @method.name) unless parentMethod?
 
     parentCtx = new ExecutionContext @core, @obj, parentMethod, this
     parentMethod.invoke @core, @obj, parentCtx, args

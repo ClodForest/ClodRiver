@@ -38,10 +38,18 @@ class CoreMethod
     paramNames
 
   _resolveImports: (core, ctx) ->
+    # BIFs that require ctx as first argument
+    ctxBifs = ['listen', 'accept', 'emit']
+
     imports = []
     for name in @_importNames
       if core.bifs[name]?
-        imports.push core.bifs[name]
+        bif = core.bifs[name]
+        # Wrap ctx-requiring BIFs to auto-inject ctx
+        if name in ctxBifs
+          imports.push (args...) -> bif(ctx, args...)
+        else
+          imports.push bif
       else if name[0] is '$'
         obj = core.toobj name
         imports.push obj

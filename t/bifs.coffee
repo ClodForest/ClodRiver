@@ -326,7 +326,7 @@ test 'BIF integration: eval_on pattern from core.clod', ->
 
       try
         add_method ctx.cthis(), name, fn
-        result = ctx.send ctx.cthis()[name]
+        result = ctx.send ctx.cthis(), name
       finally
         rm_method ctx.cthis(), name
 
@@ -354,7 +354,7 @@ test 'BIF integration: $sys.create with name from core.clod', ->
 
       if typeof name is 'string' and name isnt ''
         add_obj_name name, newObj
-        ctx.send newObj, 'root_name', [name]
+        send newObj, 'root_name', name
 
       newObj
 
