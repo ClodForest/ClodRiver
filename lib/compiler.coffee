@@ -114,23 +114,25 @@ class Compiler
 
   generateMethod: (objDef, methodName, methodDef) ->
     lines = []
-
-    # Build the nested function structure
     objVar = "obj#{objDef.id}"
+
+    # Generate the method function
+    lines.push "do ->"
+    lines.push "  fn = "
 
     # Outer function takes imports
     if methodDef.using.length > 0
       imports = methodDef.using.join ', '
-      lines.push "#{objVar}.#{methodName} = (#{imports}) ->"
+      lines.push "    (#{imports}) ->"
     else
-      lines.push "#{objVar}.#{methodName} = () ->"
+      lines.push "    () ->"
 
     # Inner function takes ctx and args
-    lines.push "  (ctx, args) ->"
+    lines.push "      (ctx, args) ->"
 
     # Args destructuring (only if args specified)
     if methodDef.argsRaw and methodDef.argsRaw.trim() isnt ''
-      lines.push "    [#{methodDef.argsRaw}] = args"
+      lines.push "        [#{methodDef.argsRaw}] = args"
       lines.push ""
 
     # Detect minimum indentation in body
@@ -142,13 +144,40 @@ class Compiler
 
     minIndent = 0 if minIndent is Infinity
 
-    # Method body - strip source indent and add 4 spaces
+    # Method body - strip source indent and add 6 spaces (nested in do block)
     for bodyLine in methodDef.body
       if bodyLine.trim() is ''
         lines.push ''
       else
         stripped = bodyLine.substring minIndent
-        lines.push "    #{stripped}"
+        lines.push "        #{stripped}"
+
+    lines.push ""
+
+    # Generate source string for serialization
+    lines.push "  source = '''"
+    if methodDef.using.length > 0
+      imports = methodDef.using.join ', '
+      lines.push "  (#{imports}) ->"
+    else
+      lines.push "  () ->"
+    lines.push "    (ctx, args) ->"
+    if methodDef.argsRaw and methodDef.argsRaw.trim() isnt ''
+      lines.push "      [#{methodDef.argsRaw}] = args"
+    for bodyLine in methodDef.body
+      if bodyLine.trim() is ''
+        lines.push ''
+      else
+        stripped = bodyLine.substring minIndent
+        lines.push "      #{stripped}"
+    lines.push "  '''"
+    lines.push ""
+
+    # Call addMethod with flags if needed
+    if methodDef.disallowOverrides
+      lines.push "  @addMethod #{objVar}, '#{methodName}', fn, source, {disallowOverrides: true}"
+    else
+      lines.push "  @addMethod #{objVar}, '#{methodName}', fn, source"
 
     lines.join '\n'
 

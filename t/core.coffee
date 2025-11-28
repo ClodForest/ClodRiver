@@ -2,6 +2,8 @@
 
 {describe, it}   = require 'node:test'
 assert           = require 'node:assert'
+CoreMethod       = require '../lib/core-method'
+
 Core             = require '../lib/core'
 
 describe 'Core', ->
@@ -105,7 +107,8 @@ describe 'Core', ->
       fn = -> (ctx, args) -> 'result'
       core.addMethod obj, 'test', fn
 
-      assert.strictEqual obj.test, fn
+      assert.ok obj.test instanceof CoreMethod
+      assert.strictEqual obj.test.fn, fn
 
     it 'marks method with definer', ->
       core = new Core()
@@ -115,7 +118,7 @@ describe 'Core', ->
       core.addMethod obj, 'test', fn
 
       assert.strictEqual obj.test.definer, obj
-      assert.strictEqual obj.test.methodName, 'test'
+      assert.strictEqual obj.test.name, 'test'
 
   describe 'call', ->
     it 'executes method on object', ->

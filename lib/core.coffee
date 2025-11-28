@@ -1,4 +1,5 @@
 CoreObject        = require './core-object'
+CoreMethod        = require './core-method'
 ExecutionContext  = require './execution-context'
 BIFs              = require './bifs'
 
@@ -61,18 +62,11 @@ class Core
 
     null
 
-  addMethod: (obj, methodName, fn, source = null) ->
-    obj[methodName] = fn
-    obj[methodName].definer = obj
-    obj[methodName].methodName = methodName
-    obj[methodName].source = source if source?
-
-  add_method: Core::addMethod
+  addMethod: (obj, methodName, fn, source = null, flags = {}) ->
+    obj[methodName] = new CoreMethod methodName, fn, obj, source, flags
 
   delMethod: (obj, methodName) ->
     delete obj[methodName]
-
-  del_method: Core::delMethod
 
   freeze: ->
     parentMap = {}
@@ -91,19 +85,9 @@ class Core
       objects[id] = obj.serialize()
 
       objMethods = {}
-      for key, val of obj when typeof val is 'function'
-        continue if key in ['constructor', 'serialize', 'deserialize', '_serializeValue', '_deserializeValue', '_isCoreObject']
+      for key, val of obj when val instanceof CoreMethod
         continue unless obj.hasOwnProperty key
-
-        methodSource = if val.source?
-          val.source
-        else
-          @_extractMethodSource val
-
-        objMethods[key] = {
-          definer: val.definer._id
-          source:  methodSource
-        }
+        objMethods[key] = val.serialize()
 
       methods[id] = objMethods if Object.keys(objMethods).length > 0
 
@@ -114,12 +98,6 @@ class Core
       objects:     objects
       methods:     methods
     }
-
-  _extractMethodSource: (fn) ->
-    src = fn.toString()
-    src = src.replace /^function[^(]*\([^)]*\)\s*\{\s*return\s*/, ''
-    src = src.replace /;\s*\}$/, ''
-    src
 
   change_parent: (child, parent) ->
     Object.setPrototypeOf child, parent if parent?
@@ -147,81 +125,39 @@ class Core
       @objectNames[name] = @objectIDs[id]
 
     if frozen.methods? and opts.compileFn?
+      resolver = (id) => @objectIDs[id] or null
       for id, objMethods of frozen.methods
         obj = @objectIDs[id]
         for methodName, methodData of objMethods
-          definer = @objectIDs[methodData.definer]
           try
-            fn = opts.compileFn methodData.source
-            @addMethod obj, methodName, fn, methodData.source
-            fn.definer = definer
+            coreMethod = CoreMethod.deserialize methodData, resolver, opts.compileFn
+            obj[methodName] = coreMethod
           catch error
             console.error "Failed to compile method #{id}.#{methodName}:", error.message
 
     this
 
   call: (obj, methodName, args = []) ->
-    if arguments.length is 2 and 'function' is typeof obj
-      method     = obj
-      args       = methodName
-      methodName = method.name
-    else
-      method     = @_findMethod obj, methodName
+    coreMethod = @_findMethod obj, methodName
+    return null unless coreMethod?
 
-    return null unless method?
-
-    ctx = new ExecutionContext this, obj, method
+    ctx = new ExecutionContext this, obj, coreMethod
 
     try
-      # Resolve imports for nested function pattern
-      imports = @_resolveImports method, ctx
-
-      # Call outer function with imports to get inner function
-      innerFn = method.apply obj, imports
-
-      # Call inner function with ctx and args
-      innerFn.call obj, ctx, args
+      coreMethod.invoke this, obj, ctx, args
     catch error
       @_handleError obj, methodName, error
       null
 
   _findMethod: (obj, methodName) ->
     return null unless obj?
-    return obj[methodName] if obj[methodName]? and typeof obj[methodName] == 'function'
+    return obj[methodName] if obj[methodName] instanceof CoreMethod
 
     proto = Object.getPrototypeOf(obj)
     if proto and proto != Object.prototype
       @_findMethod(proto, methodName)
     else
       null
-
-  _resolveImports: (method, ctx) ->
-    # Extract parameter names from outer function
-    src = method.toString()
-    match = src.match /^(?:function\s*)?\(([^)]*)\)/
-    return [] unless match?
-
-    paramNames = match[1].split(',').map (p) -> p.trim()
-    return [] if paramNames.length is 0 or paramNames[0] is ''
-
-    # Resolve each parameter
-    imports = []
-    for name in paramNames
-      # Check if it's a BIF
-      if @bifs[name]?
-        imports.push @bifs[name]
-      # Check if it's a $name object reference
-      else if name[0] is '$'
-        obj = @toobj name
-        imports.push obj
-      # Check if it's an ExecutionContext builtin
-      else if ctx[name]?
-        imports.push ctx[name]
-      else
-        # Unknown import - pass null or throw?
-        imports.push null
-
-    imports
 
   _handleError: (obj, methodName, error) ->
     console.error "Error in #{obj._id}.#{methodName}:", error.message

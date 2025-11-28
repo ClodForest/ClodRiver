@@ -2,6 +2,7 @@
 # These are made available to methods through the import mechanism
 
 CoffeeScript = require 'coffeescript'
+CoreMethod   = require './core-method'
 
 class BIFs
   constructor: (@core) ->
@@ -41,11 +42,11 @@ class BIFs
   lookup_method: (obj, methodName) =>
     current = obj
     while current? and current isnt Object.prototype
-      if current[methodName]? and typeof current[methodName] is 'function'
+      if current[methodName] instanceof CoreMethod
         method = current[methodName]
         return {
           method:  method
-          definer: method.definer ? current
+          definer: method.definer
         }
       current = Object.getPrototypeOf current
     null

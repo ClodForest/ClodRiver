@@ -1,39 +1,47 @@
+CoreMethod = require './core-method'
+
 class ExecutionContext
   constructor: (@core, @obj, @method, @parent = null) ->
     @_definer = @method.definer
     @stack    = if @parent then [@parent.stack..., @parent.obj] else []
 
-  cget: (key) ->
+  cget: (key) =>
     @_definer._state[@_definer._id]?[key]
 
-  cset: (data) ->
+  cset: (data) =>
     @_definer._state[@_definer._id] ?= {}
     Object.assign @_definer._state[@_definer._id], data
     @_definer
 
-  cthis:   -> @obj
-  definer: -> @_definer
-  caller:  -> @parent?.obj or null
-  sender:  -> @parent?._definer or null
+  cthis:   => @obj
+  definer: => @_definer
+  caller:  => @parent?.obj or null
+  sender:  => @parent?._definer or null
 
   send: (fn, args...) ->
-    return null unless fn? and typeof fn is 'function'
+    return null unless fn?
 
-    recipient = fn.definer
-    return null unless recipient?
-
-    childCtx = new ExecutionContext @core, recipient, fn, this
-    fn.call recipient, childCtx, args
+    if fn instanceof CoreMethod
+      childCtx = new ExecutionContext @core, fn.definer, fn, this
+      fn.invoke @core, fn.definer, childCtx, args
+    else if typeof fn is 'function'
+      # Legacy direct function call (shouldn't happen with CoreMethod)
+      recipient = fn.definer
+      return null unless recipient?
+      childCtx = new ExecutionContext @core, recipient, fn, this
+      fn.call recipient, childCtx, args
+    else
+      null
 
   pass: (args...) ->
     parent = Object.getPrototypeOf @_definer
     return null if parent is Object.prototype
 
-    parentMethod = @core._findMethod parent, @method.methodName
+    parentMethod = @core._findMethod parent, @method.name
     return null unless parentMethod?
 
     parentCtx = new ExecutionContext @core, @obj, parentMethod, this
-    parentMethod.call @obj, parentCtx, args
+    parentMethod.invoke @core, @obj, parentCtx, args
 
   # Network methods that need ctx
   listen: (listener, options) =>

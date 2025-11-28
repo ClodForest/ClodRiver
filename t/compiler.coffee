@@ -107,7 +107,8 @@ describe 'Compiler', ->
     compiler.compile source
     code = compiler.generate()
 
-    assert.ok code.includes 'obj0.test = (send, get) ->'
+    assert.ok code.includes '@addMethod obj0, \'test\''
+    assert.ok code.includes '(send, get) ->'
     assert.ok code.includes '(ctx, args) ->'
     assert.ok code.includes '[value] = args'
 
@@ -125,7 +126,8 @@ describe 'Compiler', ->
     compiler.compile source
     code = compiler.generate()
 
-    assert.ok code.includes 'obj0.simple = () ->'
+    assert.ok code.includes '@addMethod obj0, \'simple\''
+    assert.ok code.includes '() ->'
     assert.ok code.includes '(ctx, args) ->'
     assert.ok code.includes '[x] = args'
 
@@ -143,7 +145,8 @@ describe 'Compiler', ->
     compiler.compile source
     code = compiler.generate()
 
-    assert.ok code.includes 'obj0.noargs = (get) ->'
+    assert.ok code.includes '@addMethod obj0, \'noargs\''
+    assert.ok code.includes '(get) ->'
     assert.ok code.includes '(ctx, args) ->'
     assert.ok not code.includes '] = args' # No destructuring
 
@@ -224,16 +227,16 @@ method create
     bodyStartIdx = lines.findIndex (l) -> l.includes 'newObj = create parent'
     assert.ok bodyStartIdx > 0, 'Should find method body'
 
-    # Check that method body lines have exactly 4 spaces of indent
+    # Check that method body lines have exactly 8 spaces of indent (in do block + inner fn)
     bodyLine = lines[bodyStartIdx]
-    assert.match bodyLine, /^    [^ ]/, 'Method body should have 4 spaces indent, not more'
-    assert.match bodyLine, /^    newObj = create parent$/, 'First body line should be correctly indented'
+    assert.match bodyLine, /^        [^ ]/, 'Method body should have 8 spaces indent, not more'
+    assert.match bodyLine, /^        newObj = create parent$/, 'First body line should be correctly indented'
 
-    # Check the if statement is also at 4 spaces
+    # Check the if statement is also at 8 spaces
     ifLineIdx = lines.findIndex (l) -> l.includes "if typeof name"
     assert.ok ifLineIdx > bodyStartIdx, 'Should find if statement'
     ifLine = lines[ifLineIdx]
-    assert.match ifLine, /^    if typeof name/, 'If statement should have 4 spaces indent'
+    assert.match ifLine, /^        if typeof name/, 'If statement should have 8 spaces indent'
 
   it 'preserves relative indentation in method body', ->
     compiler = new Compiler()
@@ -262,6 +265,6 @@ method foo
     assert.ok ifLineIdx > 0, 'Should find if statement'
     assert.ok returnLineIdx > ifLineIdx, 'Should find return statement'
 
-    # The if should be at 4 spaces, the return at 6 spaces
-    assert.match lines[ifLineIdx], /^    if x > 0$/, 'If should have 4 spaces'
-    assert.match lines[returnLineIdx], /^      return x$/, 'Return should have 6 spaces (4 + 2 for block)'
+    # The if should be at 8 spaces (in do block + inner fn), the return at 10 spaces
+    assert.match lines[ifLineIdx], /^        if x > 0$/, 'If should have 8 spaces'
+    assert.match lines[returnLineIdx], /^          return x$/, 'Return should have 10 spaces (8 + 2 for block)'

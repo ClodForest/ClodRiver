@@ -1,6 +1,7 @@
-test   = require 'node:test'
-assert = require 'node:assert'
-Core   = require '../lib/core'
+test       = require 'node:test'
+assert     = require 'node:assert'
+Core       = require '../lib/core'
+CoreMethod = require '../lib/core-method'
 
 test 'BIF: create', ->
   core = new Core()
@@ -28,7 +29,7 @@ test 'BIF: add_method', ->
   testFn = -> (ctx, args) -> 'hello'
   core.call $root, 'test_add_method', [obj, 'greet', testFn]
 
-  assert.strictEqual typeof obj.greet, 'function'
+  assert.ok obj.greet instanceof CoreMethod
   result = core.call obj, 'greet'
   assert.strictEqual result, 'hello'
 
@@ -73,7 +74,7 @@ test 'BIF: rm_method', ->
       [target, name] = args
       rm_method target, name
 
-  assert.strictEqual typeof obj.temp, 'function'
+  assert.ok obj.temp instanceof CoreMethod
   core.call $root, 'test_rm_method', [obj, 'temp']
   assert.strictEqual obj.temp, undefined
 
