@@ -1,0 +1,50 @@
+#!/usr/bin/env coffee
+
+path = require 'node:path'
+fs   = require 'node:fs'
+
+rootDir = path.resolve __dirname, '..'
+pidFile = path.join rootDir, 'var', 'run', 'clodriver.pid'
+
+unless fs.existsSync pidFile
+  console.log "ClodRiver is not running (no PID file found)"
+  process.exit 1
+
+pid = parseInt fs.readFileSync(pidFile, 'utf8').trim()
+
+try
+  process.kill pid, 0
+catch
+  console.log "ClodRiver is not running (stale PID file)"
+  fs.unlinkSync pidFile
+  process.exit 1
+
+try
+  process.kill pid, 'SIGTERM'
+  console.log "Stopping ClodRiver (PID #{pid})..."
+
+  # Wait for process to exit (up to 5 seconds)
+  maxWait = 50
+  waited = 0
+
+  while waited < maxWait
+    await new Promise (resolve) -> setTimeout resolve, 100
+    waited++
+
+    try
+      process.kill pid, 0
+    catch
+      # Process is gone
+      fs.unlinkSync pidFile if fs.existsSync pidFile
+      console.log "ClodRiver stopped"
+      process.exit 0
+
+  # Still running after 5 seconds
+  console.log "Process did not stop gracefully, sending SIGKILL..."
+  process.kill pid, 'SIGKILL'
+  fs.unlinkSync pidFile if fs.existsSync pidFile
+  console.log "ClodRiver killed"
+
+catch error
+  console.error "Failed to stop ClodRiver: #{error.message}"
+  process.exit 1

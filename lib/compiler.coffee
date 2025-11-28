@@ -12,6 +12,7 @@ class Compiler
     lines = source.split '\n'
     @objects = {}
     @currentObject = null
+    @sourceLines = lines
 
     for line, lineNum in lines
       try
@@ -29,10 +30,11 @@ class Compiler
     if match = trimmed.match /^object\s+(\d+)$/
       id = parseInt match[1]
       @currentObject = {
-        id:      id
-        parent:  null
-        name:    null
-        methods: {}
+        id:       id
+        parent:   null
+        name:     null
+        methods:  {}
+        lineNum:  lineNum
       }
       @objects[id] = @currentObject
       return
@@ -53,11 +55,12 @@ class Compiler
     if match = trimmed.match /^method\s+(\w+)$/
       throw new Error "method outside object definition" unless @currentObject?
       @currentMethod = {
-        name:            match[1]
-        using:           []
-        args:            []
-        body:            []
+        name:              match[1]
+        using:             []
+        args:              []
+        body:              []
         disallowOverrides: false
+        lineNum:           lineNum
       }
       @currentObject.methods[match[1]] = @currentMethod
       @inMethod = true
@@ -87,7 +90,38 @@ class Compiler
 
     throw new Error "Unexpected line: #{trimmed}"
 
-  # Generate executable code from parsed objects
+  # Return operations to execute instead of generated code
+  getOperations: ->
+    operations = []
+
+    # Bootstrap: create all objects first
+    for id, objDef of @objects
+      parentId = objDef.parent
+      operations.push {
+        type:    'create_object'
+        id:      id
+        parent:  parentId
+        name:    objDef.name
+        lineNum: objDef.lineNum
+      }
+
+    # Add methods
+    for id, objDef of @objects
+      for methodName, methodDef of objDef.methods
+        fn = @compileMethodFunction methodDef
+        operations.push {
+          type:              'add_method'
+          objectId:          id
+          methodName:        methodName
+          fn:                fn
+          source:            @generateMethodSource(methodDef)
+          disallowOverrides: methodDef.disallowOverrides
+          lineNum:           methodDef.lineNum
+        }
+
+    operations
+
+  # Generate executable code from parsed objects (legacy)
   generate: ->
     code = []
 
@@ -111,6 +145,53 @@ class Compiler
         code.push ''
 
     code.join '\n'
+
+  # Compile method function from methodDef
+  compileMethodFunction: (methodDef) ->
+    CoffeeScript = require 'coffeescript'
+
+    code = @generateMethodSource methodDef
+    jsCode = CoffeeScript.compile code, {bare: true}
+    innerFn = eval jsCode
+    -> innerFn
+
+  # Generate method source code
+  generateMethodSource: (methodDef) ->
+    lines = []
+
+    # Outer function takes imports
+    if methodDef.using.length > 0
+      imports = methodDef.using.join ', '
+      lines.push "(#{imports}) ->"
+    else
+      lines.push "() ->"
+
+    # Inner function takes ctx and args
+    lines.push "  (ctx, args) ->"
+
+    # Args destructuring
+    if methodDef.argsRaw and methodDef.argsRaw.trim() isnt ''
+      lines.push "    [#{methodDef.argsRaw}] = args"
+      lines.push ""
+
+    # Detect minimum indentation
+    minIndent = Infinity
+    for bodyLine in methodDef.body
+      continue if bodyLine.trim() is ''
+      indent = bodyLine.match(/^(\s*)/)[1].length
+      minIndent = Math.min minIndent, indent
+
+    minIndent = 0 if minIndent is Infinity
+
+    # Method body
+    for bodyLine in methodDef.body
+      if bodyLine.trim() is ''
+        lines.push ''
+      else
+        stripped = bodyLine.substring minIndent
+        lines.push "    #{stripped}"
+
+    lines.join '\n'
 
   generateMethod: (objDef, methodName, methodDef) ->
     lines = []

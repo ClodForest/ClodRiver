@@ -15,11 +15,40 @@ class Server
     source = fs.readFileSync corePath, 'utf8'
 
     @compiler.compile source
-    coffeeCode = @compiler.generate()
+    operations = @compiler.getOperations()
 
-    jsCode = CoffeeScript.compile coffeeCode, {bare: true, inlineMap: true}
-    bootstrapFn = new Function 'core', jsCode
-    bootstrapFn.call @core, @core
+    objRefs = {}
+
+    for op in operations
+      try
+        switch op.type
+          when 'create_object'
+            parent = if op.parent? then objRefs[op.parent] else null
+            obj = @core.create parent, op.name
+            objRefs[op.id] = obj
+            @core.objectIDs[op.id] = obj
+
+          when 'add_method'
+            obj = objRefs[op.objectId]
+            unless obj?
+              throw new Error "Object #{op.objectId} not found"
+
+            flags = if op.disallowOverrides then {disallowOverrides: true} else {}
+            @core.addMethod obj, op.methodName, op.fn, op.source, flags
+
+          else
+            throw new Error "Unknown operation type: #{op.type}"
+
+      catch error
+        console.error "\nError at line #{op.lineNum} in #{corePath}:"
+        console.error "  Operation: #{op.type}"
+        if op.type is 'create_object'
+          console.error "  Object: ##{op.id} (#{op.name or 'unnamed'})"
+        else if op.type is 'add_method'
+          console.error "  Method: ##{op.objectId}.#{op.methodName}"
+        console.error "  Error: #{error.message}"
+        console.error ""
+        throw error
 
     @core
 
