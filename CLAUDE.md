@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ClodRiver is a modern MUD (Multi-User Dungeon) server written in Node.js/CoffeeScript that integrates Large Language Models for natural language parsing, dynamic world building, and intelligent NPC behavior. The project takes inspiration from ColdMUD's elegant design while leveraging modern JavaScript/CoffeeScript capabilities.
 
-**Current Status:** Validating object model implementation - Core, CoreObject, and ExecutionContext classes implementing v3.0 design.
+**Current Status:** Object model v4.0 implemented and tested - Core, CoreObject, CoreMethod, and ExecutionContext classes fully functional with all tests passing.
 
 ## Language and Style
 
@@ -15,7 +15,7 @@ ClodRiver is a modern MUD (Multi-User Dungeon) server written in Node.js/CoffeeS
 - **No Comments:** Code should be self-documenting. Avoid comments in implementation.
 - **Style:** Follow Robert's development standards (vertical alignment, self-documenting code, data structure lookups over if-chains)
 
-## Object Model (Current Design - v3.0)
+## Object Model (Current Design - v4.0)
 
 See `docs/00-ObjectModel.md` for complete specification. Key points:
 
@@ -49,25 +49,41 @@ $excalibur._state = {
 }
 ```
 
+### CoreMethod - Encapsulates Method Metadata
+
+Methods are CoreMethod instances that encapsulate function, definer, source, and flags:
+
+```coffee
+class CoreMethod
+  constructor: (@name, @fn, @definer, @source = null, @flags = {}) ->
+    @disallowOverrides = @flags.disallowOverrides ? false
+    @_importNames = null
+
+  invoke: (core, obj, ctx, args) ->
+    # Extract imports, resolve them, call outer then inner function
+```
+
 ### Method Definition - Nested Function Import Pattern
 
 Methods declare which builtins they need using nested functions:
 
 ```coffee
-Core.addMethod $sword, 'swing',
-  (get, send) ->          # Outer: declares imports
-    ([target]) ->         # Inner: actual method
-      damage = get 'damage'
-      send target::take_damage, damage
+core.addMethod $sword, 'swing',
+  (cget, send) ->         # Outer: declares imports
+    (ctx, args) ->        # Inner: actual method (receives ctx and args)
+      [target] = args
+      damage = cget 'damage'
+      send target, 'take_damage', damage
 ```
 
 Available imports:
-- `get(key)` - Read from definer's namespace
-- `set(data)` - Write to definer's namespace
-- `send(target, method, args)` - Call method on another object
-- `throw(errorType)` - Throw error
-- `this()`, `definer()`, `caller()`, `sender()` - ColdMUD builtins
+- `cget(key)` - Read from definer's namespace on current object
+- `cset(data)` - Write to definer's namespace on current object
+- `send(target, methodName, args...)` - Call method on another object
+- `pass(args...)` - Call parent's implementation of current method
+- `cthis()`, `definer()`, `caller()`, `sender()` - ColdMUD builtins
 - `$name` - Import objects by name (e.g., `$sys`, `$root`)
+- Any BIF name - `create`, `add_method`, `toint`, `tostr`, `children`, `lookup_method`, `compile`, `clod_eval`, `listen`, `accept`, `emit`
 
 ### Core API
 
@@ -77,9 +93,11 @@ class Core
     @objectIDs   = {}    # id -> object
     @objectNames = {}    # name -> object (not id!)
     @nextId      = 0
+    @bifs        = new BIFs this
 
-  create: (parent = null) ->
+  create: (parent = null, name) ->
     # Creates CoreObject with sequential ID
+    # Optionally registers name if provided
 
   destroy: (ref) ->
     # Removes object from both objectIDs and objectNames
@@ -94,14 +112,21 @@ class Core
     # Resolves '$name', '#id', number, or {$ref: id}
     # Returns object or null
 
-  addMethod: (obj, methodName, fn) ->
-    # Adds method to object, sets fn.definer and fn.methodName
+  addMethod: (obj, methodName, fn, source = null, flags = {}) ->
+    # Creates CoreMethod instance and adds to object
+    # source: CoffeeScript source for serialization
+    # flags: {disallowOverrides: bool}
 
   delMethod: (obj, methodName) ->
     # Removes method from object
 
   call: (obj, methodName, args = []) ->
     # Entry point from server - creates ExecutionContext
+    # Finds CoreMethod via _findMethod, creates ctx, invokes method
+
+  callIfExists: (obj, methodName, args = []) ->
+    # Same as call() but logs and returns null if method not found
+    # Used for event handlers
 ```
 
 ### ExecutionContext
@@ -111,38 +136,69 @@ Implemented in `lib/execution-context.coffee`, provides execution environment:
 ```coffee
 class ExecutionContext
   constructor: (@core, @obj, @method, @parent = null) ->
-    @definer = @method.definer
-    @stack   = if @parent then [@parent.stack..., @parent.obj] else []
+    @_definer = @method.definer
+    @stack    = if @parent then [@parent.stack..., @parent.obj] else []
 
-  # State access (definer's namespace)
-  get: (key) ->
-    @obj._state[@definer._id]?[key]
+  # State access (definer's namespace) - fat arrow for binding
+  cget: (key) =>
+    @obj._state[@_definer._id]?[key]
 
-  set: (data) ->
-    @obj._state[@definer._id] ?= {}
-    Object.assign @obj._state[@definer._id], data
+  cset: (data) =>
+    @obj._state[@_definer._id] ?= {}
+    Object.assign @obj._state[@_definer._id], data
     @obj
 
-  # ColdMUD builtins
-  this:    -> @obj
-  definer: -> @definer
-  caller:  -> @parent?.obj or null
-  sender:  -> @parent?.definer or null
+  # ColdMUD builtins - fat arrow for binding
+  cthis:   => @obj
+  definer: => @_definer
+  caller:  => @parent?.obj or null
+  sender:  => @parent?._definer or null
 
-  # Method dispatch
-  send: (target, methodName, args...) ->
-    # Resolves target, finds method, creates child context
+  # Method dispatch - fat arrow for binding
+  send: (target, methodName, args...) =>
+    # Resolves target via _findMethod, creates child context
     # Updates call stack automatically
+    method = @core._findMethod target, methodName
+    throw new MethodNotFoundError(target._id, methodName) unless method?
+    childCtx = new ExecutionContext @core, target, method, this
+    method.invoke @core, target, childCtx, args
 
-  pass: (args...) ->
+  pass: (args...) =>
     # Calls parent's implementation with parent context
+    parent = Object.getPrototypeOf @_definer
+    throw new NoParentMethodError(@obj._id, @method.name) if parent is Object.prototype
+    parentMethod = @core._findMethod parent, @method.name
+    throw new NoParentMethodError(@obj._id, @method.name) unless parentMethod?
+    parentCtx = new ExecutionContext @core, @obj, parentMethod, this
+    parentMethod.invoke @core, @obj, parentCtx, args
+
+  # Network methods - fat arrow for binding
+  listen: (listener, options) =>
+    @core.bifs.listen this, listener, options
+
+  accept: (connection) =>
+    @core.bifs.accept this, connection
+
+  emit: (data) =>
+    @core.bifs.emit this, data
 ```
 
 ### Method Dispatch
 
-- `core.call(obj, methodName, args)` - Entry point from server, creates root ExecutionContext
-- `ctx.send(target, methodName, args)` - Object-to-object calls, creates child ExecutionContext
-- `ctx.pass(args)` - Call parent implementation, preserves call stack
+- `core.call(obj, methodName, args)` - Entry point from server
+  - Finds CoreMethod via `_findMethod(obj, methodName)`
+  - Creates root ExecutionContext with empty parent
+  - Invokes `coreMethod.invoke(core, obj, ctx, args)`
+- `ctx.send(target, methodName, args...)` - Object-to-object calls
+  - Finds CoreMethod via `_findMethod(target, methodName)`
+  - Creates child ExecutionContext with current ctx as parent
+  - Updates call stack automatically
+  - Invokes method
+- `ctx.pass(args...)` - Call parent implementation
+  - Finds parent object via `Object.getPrototypeOf(@_definer)`
+  - Finds parent's CoreMethod for same method name
+  - Creates ExecutionContext with parent definer
+  - Preserves call stack
 - Call stack tracked automatically through ExecutionContext parent chain
 
 ## Directory Structure
@@ -150,20 +206,24 @@ class ExecutionContext
 ```
 ClodRiver/
 ├── docs/
-│   ├── 00-ObjectModel.md          # Current object model spec (PRIMARY)
+│   ├── 00-ObjectModel.md          # Current object model spec v4.0 (PRIMARY)
 │   ├── 00-ProjectVision.md        # Project goals
-│   ├── 01-Architecture.md         # Server/Core architecture
-│   ├── 02-DesignDecisions.md      # Design rationale
+│   ├── BIFs.md                    # Built-in functions documentation
+│   ├── 01-Architecture.md         # Server/Core architecture (aspirational)
+│   ├── 02-DesignDecisions.md      # Design rationale (aspirational)
 │   ├── 03-ObjectModel.md          # Earlier iteration (superseded)
 │   ├── 04-ObjectModel-Revised.md  # Earlier iteration (superseded)
 │   └── 05-ObjectModel.md          # Earlier iteration (superseded)
 ├── lib/
 │   ├── core.coffee                # Core class - object system management
 │   ├── core-object.coffee         # CoreObject class - minimal object structure
-│   └── execution-context.coffee   # ExecutionContext - method execution environment
+│   ├── core-method.coffee         # CoreMethod class - method metadata and invocation
+│   ├── execution-context.coffee   # ExecutionContext - method execution environment
+│   ├── bifs.coffee                # Built-in functions (BIFs)
+│   └── errors.coffee              # Error classes
 ├── t/
-│   ├── core.coffee                # Core tests (needs update)
-│   └── core-object.coffee         # CoreObject tests (needs update)
+│   ├── core.coffee                # Core tests - all passing
+│   └── core-object.coffee         # CoreObject tests - all passing
 └── package.json
 ```
 
@@ -190,16 +250,17 @@ Renamed for clarity:
 - `del_obj_name(name)` - removes name registration
 - Can assign multiple names to same object
 
-## CoffeeScript Notation
+## Import Resolution
 
-Uses `::` for prototype access:
+CoreMethod automatically resolves imports in this order:
 
-```coffee
-obj::method          # obj.prototype.method
-$sword::swing        # The swing method on $sword
-
-send obj::method     # Call method via prototype chain
-```
+1. **BIFs** - Check `core.bifs[name]`
+   - Network BIFs (`listen`, `accept`, `emit`) are wrapped to auto-inject ctx
+   - Other BIFs are passed as-is
+2. **$name** - Check `core.objectNames` for objects starting with `$`
+3. **ctx methods** - Check ExecutionContext for builtins
+   - `cget`, `cset`, `cthis`, `definer`, `caller`, `sender`, `send`, `pass`
+4. **null** - Unknown imports are passed as null
 
 ## Module Pattern
 
@@ -217,9 +278,10 @@ module.exports = (core) ->
   }
 
   core.addMethod $sword, 'swing',
-    (get, send) ->
-      ([target]) ->
-        damage = get 'damage'
+    (cget, send) ->
+      (ctx, args) ->
+        [target] = args
+        damage = cget 'damage'
         send target, 'take_damage', damage
 
   $sword
@@ -240,31 +302,37 @@ Tests register CoffeeScript via `node -r coffeescript/register`.
 
 - **All objects are CoreObject instances** - No class-per-instance
 - **State is class-namespaced** - Prevents inheritance conflicts
-- **Methods declare imports** - Nested function pattern (planned for v2)
+- **Methods are CoreMethod instances** - Encapsulate function, metadata, and behavior
+- **Methods declare imports** - Nested function pattern `(imports...) -> (ctx, args) -> body`
 - **ExecutionContext manages execution** - Call stack, builtins, definer tracking
+- **Fat arrow binding** - All ExecutionContext methods use `=>` for proper binding
+- **Import resolution** - Automatic resolution of BIFs, $names, and ctx methods
 - **Deep serialization** - Object references handled at any depth in state
 - **No comments in code** - Self-documenting preferred
 
 ## Current Implementation Status
 
 - ✅ package.json configured for CoffeeScript testing
-- ✅ docs/00-ObjectModel.md - finalized v3.0 specification
+- ✅ docs/00-ObjectModel.md - v4.0 specification (current)
+- ✅ docs/BIFs.md - complete BIF documentation
 - ✅ lib/core-object.coffee - CoreObject with deep serialization
-- ✅ lib/execution-context.coffee - ExecutionContext with send/pass
+- ✅ lib/core-method.coffee - CoreMethod with import resolution and invoke
+- ✅ lib/execution-context.coffee - ExecutionContext with cget/cset/send/pass
 - ✅ lib/core.coffee - Core with toobj, add_obj_name, method management
-- 🔄 t/core-object.coffee - needs update for v3.0 API
-- 🔄 t/core.coffee - needs update for v3.0 API (ExecutionContext, renamed methods)
-- 📋 Tests need to run to validate implementation
-
-**Next:** Update tests and run them to validate the object model implementation.
+- ✅ lib/bifs.coffee - All 14 BIFs implemented
+- ✅ lib/errors.coffee - Error classes
+- ✅ t/core-object.coffee - CoreObject tests passing
+- ✅ t/core.coffee - Core tests passing
+- ✅ All tests passing
 
 ## Related Documentation
 
 Primary docs (in order of importance):
-1. `docs/00-ObjectModel.md` - Current object model v3.0 (PRIMARY - finalized)
-2. `docs/00-ProjectVision.md` - Project goals and philosophy
-3. `docs/01-Architecture.md` - Server/Core two-tier architecture
-4. `docs/02-DesignDecisions.md` - Design rationale
+1. `docs/00-ObjectModel.md` - Current object model v4.0 (PRIMARY)
+2. `docs/BIFs.md` - Built-in functions reference
+3. `docs/00-ProjectVision.md` - Project goals and philosophy
+4. `docs/01-Architecture.md` - Server/Core two-tier architecture (aspirational)
+5. `docs/02-DesignDecisions.md` - Design rationale (aspirational)
 
 ## Project Context
 

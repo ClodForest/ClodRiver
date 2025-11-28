@@ -1,88 +1,310 @@
 # Built-In Functions (BIFs)
 
-Status of built-in functions needed by core.clod.
+Built-in functions available to ClodMUD methods through the import mechanism.
 
-## Already Available via ExecutionContext
+## ExecutionContext Builtins
 
-These are provided through the import mechanism in method definitions:
+These are provided through ExecutionContext and can be imported in method definitions:
 
-- ✅ `get(key)` - Read from definer's namespace
-- ✅ `set(data)` - Write to definer's namespace
-- ✅ `send(target, method, ...args)` - Method dispatch
-- ✅ `this()` - Get current object (also available as `@`)
-- ✅ `definer()` - Get definer object
-- ✅ `caller()` - Get calling object
-- ✅ `sender()` - Get sender object
-- ✅ `$name` imports - Object lookup by name (e.g., `$sys`, `$root`)
+### State Access
 
-## Need Core API Exposure
+- ✅ **`cget(key)`** - Read from definer's namespace on current object
+  ```coffee
+  cget: (key) =>
+    @obj._state[@_definer._id]?[key]
+  ```
 
-These exist in Core but need to be exposed as importable BIFs:
+- ✅ **`cset(data)`** - Write to definer's namespace on current object
+  ```coffee
+  cset: (data) =>
+    @obj._state[@_definer._id] ?= {}
+    Object.assign @obj._state[@_definer._id], data
+    @obj
+  ```
 
-- ✅ `create(parent)` - Core.create
-- ✅ `add_method(obj, name, fn)` - Core.addMethod
-- ✅ `add_obj_name(name, obj)` - Core.add_obj_name
-- ✅ `del_obj_name(name)` - Core.del_obj_name
-- ❌ `rm_method(obj, name)` - Core.delMethod (but called `rm_method` in core.clod)
+### ColdMUD Semantics
 
-## Need Implementation
+- ✅ **`cthis()`** - Get current object
+  ```coffee
+  cthis: => @obj
+  ```
 
-### Compilation BIFs
+- ✅ **`definer()`** - Get object that defined current method
+  ```coffee
+  definer: => @_definer
+  ```
 
-- ❌ `compile(code)` - Compile CoffeeScript string to function
-  - Used in: `root.eval_on:68`
-  - Should return a function that can be added as a method
-  - Function should be compilable by CoffeeScript.compile
+- ✅ **`caller()`** - Get previous object in call stack
+  ```coffee
+  caller: => @parent?.obj or null
+  ```
 
-- ❌ `clod_eval(code)` - Evaluate CoffeeScript with null context
-  - Used in: `admin.receive_line:189`
-  - Evaluates code as if definer and this were both null
-  - Used for REPL-style interaction
+- ✅ **`sender()`** - Get previous definer in call stack
+  ```coffee
+  sender: => @parent?._definer or null
+  ```
 
-### Network BIFs
+### Method Dispatch
 
-- ❌ `listen(listenerObj, {port, addr})` - Start TCP listener
-  - Used in: `sys.spawn_listener:58`
-  - Should bind to port/addr
-  - Call listenerObj's methods when connections arrive
-  - Store server handle in listenerObj's state
+- ✅ **`send(target, methodName, args...)`** - Invoke method on another object
+  ```coffee
+  send: (target, methodName, args...) =>
+    method = @core._findMethod target, methodName
+    throw new MethodNotFoundError(target._id, methodName) unless method?
 
-- ❌ `emit(data)` - Send data to socket
-  - Used in: `connection.emit:179`, `admin.notify:197`
-  - Should write to the socket associated with connection object
-  - Need to store socket reference in connection's state
+    childCtx = new ExecutionContext @core, target, method, this
+    method.invoke @core, target, childCtx, args
+  ```
 
-### Introspection BIFs
+- ✅ **`pass(args...)`** - Call parent's implementation of current method
+  ```coffee
+  pass: (args...) =>
+    parent = Object.getPrototypeOf @_definer
+    throw new NoParentMethodError(@obj._id, @method.name) if parent is Object.prototype
 
-- ❌ `toint(obj)` - Get object's numeric ID
-  - Used in: `root.init:121`, `root.root_name:145`
-  - Returns obj._id
+    parentMethod = @core._findMethod parent, @method.name
+    throw new NoParentMethodError(@obj._id, @method.name) unless parentMethod?
 
-- ❌ `tostr(value)` - Convert value to string
-  - Used in: `admin.receive_line:190`
-  - Smart stringification (handle objects, functions, etc.)
+    parentCtx = new ExecutionContext @core, @obj, parentMethod, this
+    parentMethod.invoke @core, @obj, parentCtx, args
+  ```
 
-- ❌ `children()` - Get list of child objects
-  - Used in: `root.children:89`, `root.descendents:95`
-  - Returns array of objects that have this as parent
-  - Requires walking objectIDs and checking prototypes
+### Object Imports
 
-- ❌ `lookup_method(methodName, startAncestor)` - Find method in chain
-  - Used in: `root.lookup_method:102`, `root.init:117`
-  - Walk prototype chain from startAncestor looking for method
-  - Return {method, definer} or null
+- ✅ **`$name` imports** - Import objects by name from `core.objectNames`
+  ```coffee
+  core.addMethod obj, 'test', ($sys, $root) ->
+    (ctx, args) ->
+      # $sys and $root are the actual objects
+  ```
 
-## Implementation Priority
+## Core BIFs
 
-1. **Core API exposure** - Wire up existing Core methods (create, add_method, etc.)
-2. **Basic utilities** - toint, tostr (simple to implement)
-3. **Introspection** - children, lookup_method (need Core traversal)
-4. **Compilation** - compile, clod_eval (need CoffeeScript integration)
-5. **Network** - listen, emit (need Server integration, socket management)
+These are exposed from the Core class through `core.bifs`:
 
-## Notes
+### Object Management
 
-- BIFs are made available through the import mechanism in method definitions
-- The `using` clause declares which BIFs a method needs
-- ExecutionContext provides these via the nested function pattern
-- Network BIFs will need tight integration with Server.coffee
+- ✅ **`create(parent)`** - Create new object
+  ```coffee
+  create: (parent) => @core.create parent
+  ```
+
+- ✅ **`add_method(obj, name, fn)`** - Add method to object
+  ```coffee
+  add_method: (obj, name, fn) => @core.addMethod obj, name, fn
+  ```
+
+- ✅ **`add_obj_name(name, obj)`** - Register object with name
+  ```coffee
+  add_obj_name: (name, obj) => @core.add_obj_name name, obj
+  ```
+
+- ✅ **`del_obj_name(name)`** - Remove name registration
+  ```coffee
+  del_obj_name: (name) => @core.del_obj_name name
+  ```
+
+- ✅ **`rm_method(obj, name)`** - Remove method from object
+  ```coffee
+  rm_method: (obj, name) => @core.delMethod obj, name
+  ```
+
+### Type Conversion
+
+- ✅ **`toint(obj)`** - Get object's numeric ID
+  ```coffee
+  toint: (obj) => obj?._id ? null
+  ```
+
+- ✅ **`tostr(value)`** - Convert value to string
+  ```coffee
+  tostr: (value) =>
+    return String(value) unless value?._id?
+    "##{value._id}"
+  ```
+
+### Introspection
+
+- ✅ **`children(obj)`** - Get list of direct child objects
+  ```coffee
+  children: (obj) =>
+    result = []
+    for id, candidate of @core.objectIDs
+      proto = Object.getPrototypeOf candidate
+      result.push candidate if proto is obj
+    result
+  ```
+
+- ✅ **`lookup_method(obj, methodName)`** - Find method in prototype chain
+  ```coffee
+  lookup_method: (obj, methodName) =>
+    current = obj
+    while current? and current isnt Object.prototype
+      if current[methodName] instanceof CoreMethod
+        method = current[methodName]
+        return {
+          method:  method
+          definer: method.definer
+        }
+      current = Object.getPrototypeOf current
+    null
+  ```
+
+### Compilation
+
+- ✅ **`compile(code)`** - Compile CoffeeScript string to function
+  ```coffee
+  compile: (code) =>
+    jsCode = CoffeeScript.compile code, {bare: true}
+    innerFn = eval(jsCode)
+    -> innerFn  # Wrap in outer function for nested pattern
+  ```
+
+- ✅ **`clod_eval(code)`** - Evaluate CoffeeScript expression
+  ```coffee
+  clod_eval: (code) =>
+    jsCode = CoffeeScript.compile code, {bare: true}
+    eval(jsCode)
+  ```
+
+### Network I/O
+
+- ✅ **`listen(ctx, listener, options)`** - Start TCP listener ($sys only)
+  ```coffee
+  listen: (ctx, listener, options) =>
+    $sys = @core.toobj '$sys'
+    throw new Error("listen() can only be called on $sys") if ctx.cthis() isnt $sys
+
+    net = require 'node:net'
+    {port = 7777, addr = 'localhost'} = options
+
+    server = net.createServer (socket) =>
+      listener._pendingSocket = socket
+      socketInfo = {
+        remoteAddress: socket.remoteAddress
+        remotePort:    socket.remotePort
+      }
+      @core.callIfExists listener, 'connected', [socketInfo]
+
+    server.listen port, addr
+    listener._netServer = server
+    listener
+  ```
+
+  Note: `listen` is auto-injected with ctx when imported.
+
+- ✅ **`accept(ctx, connection)`** - Accept pending connection
+  ```coffee
+  accept: (ctx, connection) =>
+    listener = ctx.cthis()
+    unless listener._pendingSocket?
+      throw new Error "accept() called on non-listener or no pending connection"
+
+    socket = listener._pendingSocket
+    delete listener._pendingSocket
+    connection._socket = socket
+
+    socket.on 'data', (buf) => @core.callIfExists connection, 'received', [buf]
+    socket.on 'close', => @core.callIfExists connection, 'disconnected'
+    socket.on 'error', (error) -> console.error "Socket error:", error
+
+    @core.callIfExists connection, 'connected'
+    connection
+  ```
+
+  Note: `accept` is auto-injected with ctx when imported.
+
+- ✅ **`emit(ctx, data)`** - Send data to connection's socket
+  ```coffee
+  emit: (ctx, data) =>
+    connection = ctx.cthis()
+    unless connection._socket?
+      throw new Error "emit() called on non-connection object"
+    connection._socket.write data
+  ```
+
+  Note: `emit` is auto-injected with ctx when imported.
+
+## Import Resolution
+
+CoreMethod automatically resolves imports in this order:
+
+1. **BIFs** - Check `core.bifs[name]`
+   - Network BIFs (`listen`, `accept`, `emit`) are wrapped to auto-inject ctx
+   - Other BIFs are passed as-is
+
+2. **$name** - Check `core.objectNames` for objects starting with `$`
+
+3. **ctx methods** - Check ExecutionContext for builtins
+   - `cget`, `cset`, `cthis`, `definer`, `caller`, `sender`, `send`, `pass`
+
+4. **null** - Unknown imports are passed as null
+
+## Usage Examples
+
+### Simple State Access
+
+```coffee
+core.addMethod $thing, 'get_name', (cget) ->
+  (ctx, args) ->
+    cget 'name'
+```
+
+### Object Creation
+
+```coffee
+core.addMethod $sys, 'create_user', (create, cset, $root) ->
+  (ctx, args) ->
+    [username] = args
+    user = create $root
+    cset {username: username, created: Date.now()}
+    user
+```
+
+### Network Programming
+
+```coffee
+core.addMethod $listener, 'start', (listen) ->
+  (ctx, args) ->
+    listen ctx.cthis(), {port: 7777, addr: 'localhost'}
+
+core.addMethod $connection, 'send_welcome', (emit) ->
+  (ctx, args) ->
+    emit "Welcome to ClodRiver!\n"
+```
+
+### Method Introspection
+
+```coffee
+core.addMethod $root, 'list_methods', (lookup_method) ->
+  (ctx, args) ->
+    methods = []
+    for name in ['init', 'create', 'children']
+      result = lookup_method ctx.cthis(), name
+      if result?
+        methods.push "#{name} (defined by ##{result.definer._id})"
+    methods.join('\n')
+```
+
+## All Available BIFs
+
+**Object Management:**
+- `create`, `add_method`, `add_obj_name`, `del_obj_name`, `rm_method`
+
+**Type Conversion:**
+- `toint`, `tostr`
+
+**Introspection:**
+- `children`, `lookup_method`
+
+**Compilation:**
+- `compile`, `clod_eval`
+
+**Network:**
+- `listen`, `accept`, `emit`
+
+**ExecutionContext:**
+- `cget`, `cset`, `cthis`, `definer`, `caller`, `sender`, `send`, `pass`
+
+**Object Imports:**
+- Any `$name` from `core.objectNames`
