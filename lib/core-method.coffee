@@ -39,7 +39,7 @@ class CoreMethod
 
   _resolveImports: (core, ctx) ->
     # BIFs that require ctx as first argument
-    ctxBifs = ['listen', 'accept', 'emit']
+    ctxBifs = ['textdump', 'listen', 'accept', 'emit']
 
     imports = []
     for name in @_importNames

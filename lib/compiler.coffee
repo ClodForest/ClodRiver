@@ -34,6 +34,7 @@ class Compiler
         parent:   null
         name:     null
         methods:  {}
+        data:     null
         lineNum:  lineNum
       }
       @objects[id] = @currentObject
@@ -64,6 +65,18 @@ class Compiler
       }
       @currentObject.methods[match[1]] = @currentMethod
       @inMethod = true
+      @inData = false
+      return
+
+    # Match 'data'
+    if trimmed is 'data'
+      throw new Error "data outside object definition" unless @currentObject?
+      @currentObject.data = {
+        body:    []
+        lineNum: lineNum
+      }
+      @inData = true
+      @inMethod = false
       return
 
     # Inside method definition
@@ -86,6 +99,12 @@ class Compiler
 
       # Body line - collect for now
       @currentMethod.body.push line
+      return
+
+    # Inside data definition
+    if @inData
+      # Body line - collect for now
+      @currentObject.data.body.push line
       return
 
     throw new Error "Unexpected line: #{trimmed}"
@@ -117,6 +136,18 @@ class Compiler
           source:            @generateMethodSource(methodDef)
           disallowOverrides: methodDef.disallowOverrides
           lineNum:           methodDef.lineNum
+        }
+
+    # Set data
+    for id, objDef of @objects
+      if objDef.data?
+        fn = @compileDataFunction objDef.data
+        operations.push {
+          type:     'set_data'
+          objectId: id
+          fn:       fn
+          source:   @generateDataSource(objDef.data)
+          lineNum:  objDef.data.lineNum
         }
 
     operations
@@ -154,6 +185,14 @@ class Compiler
     jsCode = CoffeeScript.compile code, {bare: true}
     eval jsCode  # Returns the outer function directly
 
+  # Compile data function from dataDef
+  compileDataFunction: (dataDef) ->
+    CoffeeScript = require 'coffeescript'
+
+    code = @generateDataSource dataDef
+    jsCode = CoffeeScript.compile code, {bare: true}
+    eval jsCode  # Returns function that takes ctx and returns state object
+
   # Generate method source code
   generateMethodSource: (methodDef) ->
     lines = []
@@ -189,6 +228,32 @@ class Compiler
       else
         stripped = bodyLine.substring minIndent
         lines.push "    #{stripped}"
+
+    lines.join '\n'
+
+  # Generate data source code
+  generateDataSource: (dataDef) ->
+    lines = []
+
+    # Function takes ctx
+    lines.push "(ctx) ->"
+
+    # Detect minimum indentation
+    minIndent = Infinity
+    for bodyLine in dataDef.body
+      continue if bodyLine.trim() is ''
+      indent = bodyLine.match(/^(\s*)/)[1].length
+      minIndent = Math.min minIndent, indent
+
+    minIndent = 0 if minIndent is Infinity
+
+    # Data body - must return an object mapping namespace IDs to state
+    for bodyLine in dataDef.body
+      if bodyLine.trim() is ''
+        lines.push ''
+      else
+        stripped = bodyLine.substring minIndent
+        lines.push "  #{stripped}"
 
     lines.join '\n'
 

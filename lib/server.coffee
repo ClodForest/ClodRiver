@@ -35,6 +35,30 @@ class Server
             flags = if op.disallowOverrides then {disallowOverrides: true} else {}
             @core.addMethod obj, op.methodName, op.fn, op.source, flags
 
+          when 'set_data'
+            obj = objRefs[op.objectId]
+            unless obj?
+              throw new Error "Object #{op.objectId} not found"
+
+            # Create a minimal execution context for data block
+            ExecutionContext = require './execution-context'
+            dummyMethod = {definer: obj, name: '_data_loader'}
+            ctx = new ExecutionContext @core, obj, dummyMethod
+
+            # Execute data function with ctx
+            stateData = op.fn ctx
+
+            # Apply state data to object, remapping namespace IDs
+            for oldNamespaceId, data of stateData
+              # Map old object ID to new object ID
+              newObj = objRefs[parseInt(oldNamespaceId)]
+              if newObj?
+                newNamespaceId = newObj._id
+                obj._state[newNamespaceId] = data
+              else
+                # No mapping found, use original ID (shouldn't happen in valid dumps)
+                obj._state[oldNamespaceId] = data
+
           else
             throw new Error "Unknown operation type: #{op.type}"
 
@@ -45,6 +69,8 @@ class Server
           console.error "  Object: ##{op.id} (#{op.name or 'unnamed'})"
         else if op.type is 'add_method'
           console.error "  Method: ##{op.objectId}.#{op.methodName}"
+        else if op.type is 'set_data'
+          console.error "  Data: ##{op.objectId}"
         console.error "  Error: #{error.message}"
         console.error ""
         throw error

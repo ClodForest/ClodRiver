@@ -64,6 +64,15 @@ class BIFs
     # Use eval directly to execute and return the result
     eval(jsCode)
 
+  # Persistence
+  textdump: (ctx, relativePath) =>
+    # Enforce $sys-only
+    $sys = @core.toobj '$sys'
+    unless ctx.definer() is $sys
+      throw new Error "textdump is only callable by $sys"
+
+    @core.textdump relativePath
+
   # Network
   listen: (ctx, listener, options) =>
     # Enforce $sys-only
@@ -136,6 +145,7 @@ class BIFs
       'toint', 'tostr',
       'children', 'lookup_method',
       'compile', 'clod_eval',
+      'textdump',
       'listen', 'accept', 'emit'
     ]
 
