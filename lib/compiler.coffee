@@ -152,8 +152,7 @@ class Compiler
 
     code = @generateMethodSource methodDef
     jsCode = CoffeeScript.compile code, {bare: true}
-    innerFn = eval jsCode
-    -> innerFn
+    eval jsCode  # Returns the outer function directly
 
   # Generate method source code
   generateMethodSource: (methodDef) ->

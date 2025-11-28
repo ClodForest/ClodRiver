@@ -10,7 +10,7 @@ server = new Server()
 
 try
   server.loadCore corePath
-  server.start 7777, 'localhost'
+  server.start 7777, '127.0.0.1'
 catch error
   console.error "Failed to start:", error
   process.exit 1

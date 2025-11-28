@@ -14,7 +14,7 @@ method create
 
   if typeof name is 'string' and name isnt ''
     add_obj_name name, newObj
-    send newObj.root_name, name
+    send newObj, 'root_name', name
 
   newObj
 
@@ -38,23 +38,23 @@ method del_obj_name
   del_obj_name name
 
 method startup
-  using get, set, send, $connection
+  using cget, cset, send, $connection, cthis
   args port = 7777, addr = 'localhost'
 
-  set {port, addr}
-  send @spawn_listener, $connection, {port, addr}
+  cset {port, addr}
+  send cthis(), 'spawn_listener', $connection, {port, addr}
 
 method spawn_listener
-  using listen, get, send
+  using listen, cget, send
   args connection_class, options
 
   if not options
-    port = get 'port'
-    addr = get 'addr'
+    port = cget 'port'
+    addr = cget 'addr'
   else
     {port = 7777, addr = 'localhost'} = options
 
-  newListener = send connection_class.spawn
+  newListener = send connection_class, 'spawn'
   listen newListener, {port, addr}
 
 
@@ -62,23 +62,23 @@ object 1
 name root
 
 method eval_on
-  using $sys, send, compile
-  args code, definer = this
+  using $sys, send, compile, cthis
+  args code, definer = cthis
 
   fn = compile code
   fn.definer = definer
 
   prefix = "eval_temp_"
   fnNumber = 0
-  fnNumber++ while 'function' is typeof @[name = prefix + fnNumber]
+  fnNumber++ while 'function' is typeof cthis()[name = prefix + fnNumber]
   fn.name = name
 
   try
-    $sys.add_methods this, [name]: fn
-    result = send @[name]
+    send $sys, 'add_methods', cthis(), {[name]: fn}
+    result = send cthis(), name
 
   finally
-    $sys.rm_method this, fn
+    send $sys, 'rm_method', cthis(), fn
 
   return result
 
@@ -90,9 +90,9 @@ method children
 
 
 method descendents
-  using children
+  using children, send
 
-  children().concat (children().map (child) -> send child.descendents)...
+  children().concat (children().map (child) -> send child, 'descendents')...
 
 method lookup_method
   disallow overrides
@@ -103,19 +103,19 @@ method lookup_method
 
 method init
   disallow overrides
-  using toint, send, sender
+  using toint, send, sender, cthis
 
-  if sender isnt @
+  if sender() isnt cthis()
     throw "perm"
 
   errors = {}
 
-  for p in @parents().reverse()
+  for p in cthis().parents().reverse()
     try
-      methodName = "init_#{send p.root_name}"
+      methodName = "init_#{send p, 'root_name'}"
 
-      if (found = send p.lookup_method, methodName) and found.definer is p
-        send @[methodName]
+      if (found = send p, 'lookup_method', methodName) and found.definer is p
+        send cthis(), methodName
 
     catch e
       errors[toint p] = e
@@ -124,49 +124,62 @@ method init
 
 method spawn
   disallow overrides
-  using $sys, send
+  using $sys, send, cthis
 
-  send $sys.create, @
+  send $sys, 'create', cthis()
 
 method root_name
-  using send, set, get, $sys, toint
+  using send, cset, cget, $sys, toint, cthis
   args newName
 
   if newName
     try
-      send $sys.del_obj_name, @, get('name')
+      send $sys, 'del_obj_name', cget('name')
 
-    send $sys.add_obj_name, @, newName
-    set {name: newName}
+    send $sys, 'add_obj_name', newName, cthis()
+    cset {name: newName}
   else
-    if name = get 'name'
+    if name = cget 'name'
       return name
 
-    '#' + toint(@)
+    '#' + toint(cthis())
 
 
 object 2
 name connection
 
 method spawn
-  using $sys, send
+  using $sys, send, cthis
 
-  send $sys.create, @
+  result = send $sys, 'create', cthis()
+  return result
 
-method data
-  using emit, send, $admin, get, set
+method connected
+  using send, accept, $connection, $admin, cthis
+  args socketInfo
+
+  if socketInfo
+    # Called as listener - spawn new connection and accept it
+    connection = send $connection, 'spawn'
+    accept connection
+  else
+    # Called as client connection - tell $admin about us
+    send $admin, 'set_connection', cthis()
+
+method received
+  using emit, send, $admin, cget, cset, cthis
   args buf
 
-  if not @buf
-    @buf = new Buffer
+  if not cget 'buf'
+    cset {buf: Buffer.from('')}
 
-  @buf = Buffer.concat [@buf, buf]
-  lines = @buf.toString().split /\r?\n/
-  @buf = Buffer.from lines[lines.length - 1]
+  currentBuf = Buffer.concat [cget('buf'), buf]
+  lines = currentBuf.toString().split /\r?\n/
+  cset {buf: Buffer.from(lines[lines.length - 1])}
 
   try
     for line in lines[...-1]
-      send $admin.receive_line, line
+      send $admin, 'receive_line', line
 
   catch e
     emit e.toString()
@@ -178,20 +191,30 @@ method emit
 
   emit data
 
+method disconnected
+  # Called when socket closes
+  # TODO: cleanup
+
 
 object 3
 name admin
 
+method set_connection
+  using cset
+  args connection
+
+  cset {connection: connection}
+
 method receive_line
-  using send, clod_eval, tostr
+  using send, clod_eval, tostr, cthis
   args s
 
   result = clod_eval s
-  send @notify, "=> #{tostr result}"
+  send cthis(), 'notify', "=> #{tostr result}"
 
 method notify
-  using send, get
+  using send, cget
   args s
 
-  connection = get 'connection'
-  send connection.emit, s
+  connection = cget 'connection'
+  send connection, 'emit', s

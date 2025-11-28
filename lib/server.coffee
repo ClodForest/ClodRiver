@@ -1,9 +1,8 @@
-net        = require 'node:net'
-fs         = require 'node:fs'
+fs           = require 'node:fs'
 CoffeeScript = require 'coffeescript'
 
-Core       = require './core'
-Compiler   = require './compiler'
+Core         = require './core'
+Compiler     = require './compiler'
 
 class Server
   constructor: ->
@@ -52,38 +51,14 @@ class Server
 
     @core
 
-  start: (port = 7777, addr = 'localhost') ->
-    @server = net.createServer (socket) =>
-      @handleConnection socket
-
-    @server.listen port, addr, =>
-      console.log "ClodRiver listening on #{addr}:#{port}"
-
-  handleConnection: (socket) ->
-    $connection = @core.toobj '$connection'
-    unless $connection?
-      socket.end "Server error: $connection not found\n"
-      return
-
-    connection = @core.call $connection, 'spawn'
-    unless connection?
-      socket.end "Server error: failed to spawn connection\n"
-      return
-
-    socket.on 'data', (buf) =>
-      try
-        @core.call connection, 'data', [buf]
-      catch error
-        console.error "Error handling data:", error
-        socket.end "Server error\n"
-
-    socket.on 'error', (error) ->
-      console.error "Socket error:", error
-
-    socket.on 'close', ->
-      console.log "Connection closed"
+  start: (port = 7777, addr = '127.0.0.1') ->
+    # Call $sys.startup which will use listen BIF to create the TCP server
+    $sys = @core.toobj '$sys'
+    @core.call $sys, 'startup', [port, addr]
+    console.log "ClodRiver started via $sys.startup on #{addr}:#{port}"
 
   stop: ->
-    @server?.close()
+    # TODO: implement graceful shutdown via $sys.shutdown
+    console.log "Server stop requested"
 
 module.exports = Server
