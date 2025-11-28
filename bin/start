@@ -5,11 +5,14 @@ path    = require 'node:path'
 fs      = require 'node:fs'
 
 rootDir = path.resolve __dirname, '..'
-logsDir = path.join rootDir, 'logs'
-pidFile = path.join rootDir, 'clodriver.pid'
-logFile = path.join logsDir, 'clodriver.log'
+varDir  = path.join rootDir, 'var'
+runDir  = path.join varDir, 'run'
+logDir  = path.join varDir, 'log'
+pidFile = path.join runDir, 'clodriver.pid'
+logFile = path.join logDir, 'clodriver.log'
 
-fs.mkdirSync logsDir, {recursive: true} unless fs.existsSync logsDir
+fs.mkdirSync runDir, {recursive: true} unless fs.existsSync runDir
+fs.mkdirSync logDir, {recursive: true} unless fs.existsSync logDir
 
 if fs.existsSync pidFile
   pid = parseInt fs.readFileSync(pidFile, 'utf8').trim()
@@ -22,11 +25,17 @@ if fs.existsSync pidFile
     console.log "Removing stale PID file"
     fs.unlinkSync pidFile
 
-serverPath = path.join rootDir, 'bin', 'server'
+serverPath = path.join rootDir, 'bin', 'server.coffee'
 
 logFd = fs.openSync logFile, 'a'
 
-serverProc = spawn serverPath, [], {
+nodeArgs = [
+  '--enable-source-maps'
+  '-r', path.join(rootDir, 'workaround', 'fix-coffee-line-numbers.js')
+  serverPath
+]
+
+serverProc = spawn 'node', nodeArgs, {
   detached: true
   stdio:    ['ignore', logFd, logFd]
   cwd:      rootDir

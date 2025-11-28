@@ -5,8 +5,8 @@
   "main": "lib/server.coffee",
   "type": "commonjs",
   "scripts": {
-    "test": "node --enable-source-maps -r ./test-setup.js --test 't/**/*.coffee'",
-    "test:watch": "node --enable-source-maps -r ./test-setup.js --test --watch 't/**/*.coffee'"
+    "test": "node --enable-source-maps -r ./workaround/fix-coffee-line-numbers.js --test 't/**/*.coffee'",
+    "test:watch": "node --enable-source-maps -r ./workaround/fix-coffee-line-numbers.js --test --watch 't/**/*.coffee'"
   },
   "keywords": [
     "mud",
