@@ -167,6 +167,42 @@ These are exposed from the Core class through `core.bifs`:
     eval(jsCode)
   ```
 
+### Persistence
+
+- ✅ **`textdump(ctx, relativePath)`** - Generate textdump file ($sys only)
+  ```coffee
+  textdump: (ctx, relativePath) =>
+    $sys = @core.toobj '$sys'
+    unless ctx.definer() is $sys
+      throw new Error "textdump is only callable by $sys"
+    @core.textdump relativePath
+  ```
+
+  Generates a .clod file containing all objects, methods, and state data. The path is relative to the db/ directory.
+
+  **Example textdump output:**
+  ```coffee
+  object 2
+  parent 1
+  name player
+
+  method greet
+    using cget
+
+    "Hello, I'm #{cget 'name'}"
+
+  data
+    {
+      2:
+        {
+            name: 'Alice',
+            level: 5
+          }
+    }
+  ```
+
+  Note: `textdump` is auto-injected with ctx when imported.
+
 ### Network I/O
 
 - ✅ **`listen(ctx, listener, options)`** - Start TCP listener ($sys only)

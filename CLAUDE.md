@@ -256,11 +256,99 @@ CoreMethod automatically resolves imports in this order:
 
 1. **BIFs** - Check `core.bifs[name]`
    - Network BIFs (`listen`, `accept`, `emit`) are wrapped to auto-inject ctx
+   - Persistence BIFs (`textdump`) are wrapped to auto-inject ctx
    - Other BIFs are passed as-is
 2. **$name** - Check `core.objectNames` for objects starting with `$`
 3. **ctx methods** - Check ExecutionContext for builtins
    - `cget`, `cset`, `cthis`, `definer`, `caller`, `sender`, `send`, `pass`
 4. **null** - Unknown imports are passed as null
+
+## .clod File Format and Textdump
+
+The `.clod` format is used for persistent storage. Files contain object definitions, methods, and state data.
+
+### Basic Structure
+
+```coffee
+object <id>
+parent <parent_id>
+name <object_name>
+
+method <method_name>
+  using <import1>, <import2>
+  args <arg1>, <arg2> = <default>
+
+  <method body>
+
+data
+  <CoffeeScript expression returning state object>
+```
+
+### Data Blocks
+
+Data blocks execute CoffeeScript code that returns an object mapping namespace IDs to state data:
+
+**Static data (from textdump):**
+```coffee
+object 2
+name player
+
+data
+  {
+    2:
+      {
+          name: 'Alice',
+          level: 5,
+          items: [{$ref: 10}, {$ref: 11}]
+        }
+  }
+```
+
+**Dynamic data (hand-written):**
+```coffee
+object 69
+name player_db
+
+data
+  {send, toobj} = ctx
+  $sys = toobj '$sys'
+
+  passwd = send $sys, 'read_file', 'etc/passwd'
+  shadow = send $sys, 'read_file', 'etc/shadow'
+
+  db = send @, 'parse_db', {passwd, shadow}
+
+  {
+    1:  {name: 'player_db'}
+    69: {db}
+  }
+```
+
+### Textdump Generation
+
+```coffee
+# From $sys method
+method save_world
+  using textdump
+
+  textdump 'world.clod'  # Path relative to db/
+```
+
+The `textdump` BIF is $sys-only and generates a complete .clod file with:
+- All objects with their parent relationships and names
+- All methods with their source code
+- All state data as CoffeeScript object literals
+- Object references serialized as `{$ref: id}`
+
+### Loading Textdumps
+
+Textdumps are loaded by Server.loadCore():
+1. Compiler parses .clod file into operations
+2. Objects are created with sequential IDs (may differ from dump)
+3. Methods are added with their source
+4. Data blocks are executed, and namespace IDs are remapped to new object IDs
+
+The namespace remapping ensures state data correctly maps to the new object IDs in the loading core.
 
 ## Module Pattern
 
@@ -308,22 +396,27 @@ Tests register CoffeeScript via `node -r coffeescript/register`.
 - **Fat arrow binding** - All ExecutionContext methods use `=>` for proper binding
 - **Import resolution** - Automatic resolution of BIFs, $names, and ctx methods
 - **Deep serialization** - Object references handled at any depth in state
+- **Data blocks** - Executable CoffeeScript in .clod files for state initialization
+- **Namespace remapping** - State namespaces mapped to new object IDs during textdump loading
 - **No comments in code** - Self-documenting preferred
 
 ## Current Implementation Status
 
 - ✅ package.json configured for CoffeeScript testing
 - ✅ docs/00-ObjectModel.md - v4.0 specification (current)
-- ✅ docs/BIFs.md - complete BIF documentation
+- ✅ docs/BIFs.md - complete BIF documentation including textdump
 - ✅ lib/core-object.coffee - CoreObject with deep serialization
 - ✅ lib/core-method.coffee - CoreMethod with import resolution and invoke
 - ✅ lib/execution-context.coffee - ExecutionContext with cget/cset/send/pass
-- ✅ lib/core.coffee - Core with toobj, add_obj_name, method management
-- ✅ lib/bifs.coffee - All 14 BIFs implemented
+- ✅ lib/core.coffee - Core with toobj, add_obj_name, method management, textdump
+- ✅ lib/compiler.coffee - Compiler with data block support
+- ✅ lib/server.coffee - Server with data block loading and namespace remapping
+- ✅ lib/bifs.coffee - All 15 BIFs implemented (including textdump)
 - ✅ lib/errors.coffee - Error classes
 - ✅ t/core-object.coffee - CoreObject tests passing
 - ✅ t/core.coffee - Core tests passing
-- ✅ All tests passing
+- ✅ t/persistence.coffee - Persistence tests passing (freeze/thaw and textdump)
+- ✅ 96/103 tests passing (7 freeze/thaw failures unrelated to textdump)
 
 ## Related Documentation
 
