@@ -3,6 +3,7 @@
 
 CoffeeScript = require 'coffeescript'
 CoreMethod   = require './core-method'
+TextDump     = require './text-dump'
 
 class BIFs
   constructor: (@core) ->
@@ -66,12 +67,23 @@ class BIFs
 
   # Persistence
   textdump: (ctx, relativePath) =>
-    # Enforce $sys-only
+    fs   = require 'node:fs'
+    path = require 'node:path'
+
     $sys = @core.toobj '$sys'
     unless ctx.definer() is $sys
       throw new Error "textdump is only callable by $sys"
 
-    @core.textdump relativePath
+    dump = TextDump.fromCore @core
+    content = dump.toString()
+
+    fullPath = path.join process.cwd(), relativePath
+    dirPath  = path.dirname fullPath
+
+    fs.mkdirSync dirPath, {recursive: true} unless fs.existsSync dirPath
+    fs.writeFileSync fullPath, content, 'utf8'
+
+    fullPath
 
   # Network
   listen: (ctx, listener, options) =>

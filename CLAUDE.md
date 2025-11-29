@@ -219,11 +219,18 @@ ClodRiver/
 │   ├── core-object.coffee         # CoreObject class - minimal object structure
 │   ├── core-method.coffee         # CoreMethod class - method metadata and invocation
 │   ├── execution-context.coffee   # ExecutionContext - method execution environment
+│   ├── text-dump.coffee           # TextDump class - .clod format serialization
+│   ├── compiler.coffee            # Compiler class - method source compilation
 │   ├── bifs.coffee                # Built-in functions (BIFs)
 │   └── errors.coffee              # Error classes
 ├── t/
-│   ├── core.coffee                # Core tests - all passing
-│   └── core-object.coffee         # CoreObject tests - all passing
+│   ├── core.coffee                # Core tests
+│   ├── core-object.coffee         # CoreObject tests
+│   ├── core-method.coffee         # CoreMethod tests
+│   ├── text-dump.coffee           # TextDump tests
+│   ├── compiler.coffee            # Compiler tests
+│   ├── persistence.coffee         # freeze/thaw tests
+│   └── bifs.coffee                # BIF tests
 └── package.json
 ```
 
@@ -263,7 +270,48 @@ CoreMethod automatically resolves imports in this order:
    - `cget`, `cset`, `cthis`, `definer`, `caller`, `sender`, `send`, `pass`
 4. **null** - Unknown imports are passed as null
 
-## .clod File Format and Textdump
+## TextDump and Compiler
+
+### TextDump Class
+
+`TextDump` handles conversion between Core state and `.clod` format strings:
+
+```coffee
+TextDump = require './lib/text-dump'
+
+# Parse .clod format string
+dump = TextDump.fromString source
+
+# Capture from existing Core
+dump = TextDump.fromCore core
+
+# Apply to a Core (returns {oldId: newObj} map)
+refs = dump.apply core
+
+# Serialize to .clod format
+str = dump.toString()
+```
+
+### Compiler Class
+
+`Compiler` handles method source compilation:
+
+```coffee
+Compiler = require './lib/compiler'
+
+# Compile method source to function
+fn = Compiler.compileMethod source
+
+# Get function with metadata
+result = Compiler.compileMethod source, {returnMetadata: true}
+# Returns: {fn, name, using, argsRaw, disallowOverrides, source}
+
+# Parse without compiling
+metadata = Compiler.parseMethodSource source
+# Returns: {name, using, argsRaw, body, disallowOverrides}
+```
+
+## .clod File Format
 
 The `.clod` format is used for persistent storage. Files contain object definitions, methods, and state data.
 
@@ -286,7 +334,7 @@ data
 
 ### Data Blocks
 
-Data blocks execute CoffeeScript code that returns an object mapping namespace IDs to state data:
+Data blocks contain CoffeeScript that returns an object mapping namespace IDs to state data:
 
 **Static data (from textdump):**
 ```coffee
@@ -324,7 +372,7 @@ data
   }
 ```
 
-### Textdump Generation
+### Textdump BIF
 
 ```coffee
 # From $sys method
@@ -340,15 +388,21 @@ The `textdump` BIF is $sys-only and generates a complete .clod file with:
 - All state data as CoffeeScript object literals
 - Object references serialized as `{$ref: id}`
 
-### Loading Textdumps
+### Loading .clod Files
 
-Textdumps are loaded by Server.loadCore():
-1. Compiler parses .clod file into operations
-2. Objects are created with sequential IDs (may differ from dump)
-3. Methods are added with their source
-4. Data blocks are executed, and namespace IDs are remapped to new object IDs
+```coffee
+fs       = require 'node:fs'
+TextDump = require './lib/text-dump'
+Core     = require './lib/core'
 
-The namespace remapping ensures state data correctly maps to the new object IDs in the loading core.
+source = fs.readFileSync 'db/world.clod', 'utf8'
+dump   = TextDump.fromString source
+core   = new Core()
+refs   = dump.apply core
+
+# refs maps old object IDs to new objects
+# Namespace IDs in state are automatically remapped
+```
 
 ## Module Pattern
 
@@ -408,15 +462,20 @@ Tests register CoffeeScript via `node -r coffeescript/register`.
 - ✅ lib/core-object.coffee - CoreObject with deep serialization
 - ✅ lib/core-method.coffee - CoreMethod with import resolution and invoke
 - ✅ lib/execution-context.coffee - ExecutionContext with cget/cset/send/pass
-- ✅ lib/core.coffee - Core with toobj, add_obj_name, method management, textdump
-- ✅ lib/compiler.coffee - Compiler with data block support
+- ✅ lib/core.coffee - Core with toobj, add_obj_name, method management
+- ✅ lib/text-dump.coffee - TextDump with fromString/fromCore/apply/toString
+- ✅ lib/compiler.coffee - Compiler with compileMethod/parseMethodSource
 - ✅ lib/server.coffee - Server with data block loading and namespace remapping
 - ✅ lib/bifs.coffee - All 15 BIFs implemented (including textdump)
 - ✅ lib/errors.coffee - Error classes
 - ✅ t/core-object.coffee - CoreObject tests passing
 - ✅ t/core.coffee - Core tests passing
-- ✅ t/persistence.coffee - Persistence tests passing (freeze/thaw and textdump)
-- ✅ 96/103 tests passing (7 freeze/thaw failures unrelated to textdump)
+- ✅ t/core-method.coffee - CoreMethod tests passing
+- ✅ t/text-dump.coffee - TextDump tests passing
+- ✅ t/compiler.coffee - Compiler tests passing
+- ✅ t/persistence.coffee - freeze/thaw tests passing
+- ✅ t/bifs.coffee - BIF tests passing
+- ✅ 116 tests passing
 
 ## Related Documentation
 

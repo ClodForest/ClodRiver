@@ -1,270 +1,154 @@
 {describe, it} = require 'node:test'
 assert         = require 'node:assert'
+
 Compiler       = require '../lib/compiler'
 Core           = require '../lib/core'
+CoreMethod     = require '../lib/core-method'
 
 describe 'Compiler', ->
-  it 'parses object definitions', ->
-    source = '''
-      object 0
-      parent 1
-      name sys
+  describe 'compileMethod', ->
+    it 'compiles method with using clause', ->
+      source = '''
+        method test
+          using send, cget
+          args value
 
-      object 1
-      name root
-    '''
+          cget 'stored'
+      '''
 
-    compiler = new Compiler()
-    objects = compiler.compile source
+      fn = Compiler.compileMethod source
 
-    assert.strictEqual Object.keys(objects).length, 2
-    assert.strictEqual objects[0].id, 0
-    assert.strictEqual objects[0].parent, 1
-    assert.strictEqual objects[0].name, 'sys'
-    assert.strictEqual objects[1].id, 1
-    assert.strictEqual objects[1].name, 'root'
-    assert.strictEqual objects[1].parent, null
+      assert.ok typeof fn is 'function'
 
-  it 'parses method definitions', ->
-    source = '''
-      object 0
+    it 'compiles method without using clause', ->
+      source = '''
+        method simple
+          args x
 
-      method test
-        using foo, bar
-        args x, y = 5
+          x * 2
+      '''
 
-        x + y
-    '''
+      fn = Compiler.compileMethod source
 
-    compiler = new Compiler()
-    objects = compiler.compile source
+      assert.ok typeof fn is 'function'
 
-    method = objects[0].methods.test
-    assert.ok method?
-    assert.deepStrictEqual method.using, ['foo', 'bar']
-    assert.strictEqual method.argsRaw, 'x, y = 5'
-    assert.ok method.body.length > 0
+    it 'compiles method without args', ->
+      source = '''
+        method noargs
+          using cget
 
-  it 'parses disallow overrides directive', ->
-    source = '''
-      object 1
+          cget 'value'
+      '''
 
-      method critical
-        disallow overrides
+      fn = Compiler.compileMethod source
 
-        return "safe"
-    '''
+      assert.ok typeof fn is 'function'
 
-    compiler = new Compiler()
-    objects = compiler.compile source
+    it 'compiles method with disallow overrides', ->
+      source = '''
+        method critical
+          disallow overrides
 
-    method = objects[1].methods.critical
-    assert.strictEqual method.disallowOverrides, true
+          return "safe"
+      '''
 
-  it 'generates code for simple object', ->
-    source = '''
-      object 0
-      name sys
-    '''
+      result = Compiler.compileMethod source, {returnMetadata: true}
 
-    compiler = new Compiler()
-    compiler.compile source
-    code = compiler.generate()
+      assert.ok result.fn?
+      assert.strictEqual result.disallowOverrides, true
 
-    assert.ok code.includes 'obj0 = @create null'
-    assert.ok code.includes "@add_obj_name 'sys', obj0"
-    assert.ok code.includes '$sys = obj0'
+    it 'returns method name', ->
+      source = '''
+        method myMethod
+          args x
 
-  it 'generates code for object with parent', ->
-    source = '''
-      object 0
-      name sys
+          x + 1
+      '''
 
-      object 1
-      parent 0
-      name root
-    '''
+      result = Compiler.compileMethod source, {returnMetadata: true}
 
-    compiler = new Compiler()
-    compiler.compile source
-    code = compiler.generate()
+      assert.strictEqual result.name, 'myMethod'
 
-    assert.ok code.includes 'obj0 = @create null'
-    assert.ok code.includes 'obj1 = @create @objectIDs[0]'
+    it 'returns using list', ->
+      source = '''
+        method test
+          using foo, bar, $baz
 
-  it 'generates method with using clause', ->
-    source = '''
-      object 0
+          foo + bar
+      '''
 
-      method test
-        using send, get
-        args value
+      result = Compiler.compileMethod source, {returnMetadata: true}
 
-        get 'stored'
-    '''
+      assert.deepStrictEqual result.using, ['foo', 'bar', '$baz']
 
-    compiler = new Compiler()
-    compiler.compile source
-    code = compiler.generate()
+    it 'works with Core.addMethod', ->
+      source = '''
+        method greet
+          using cget
 
-    assert.ok code.includes '@addMethod obj0, \'test\''
-    assert.ok code.includes '(send, get) ->'
-    assert.ok code.includes '(ctx, args) ->'
-    assert.ok code.includes '[value] = args'
+          "Hello, " + cget('name')
+      '''
 
-  it 'generates method without using clause', ->
-    source = '''
-      object 0
+      result = Compiler.compileMethod source, {returnMetadata: true}
 
-      method simple
+      core = new Core()
+      obj = core.create()
+      obj._state[obj._id] = {name: 'World'}
+
+      flags = if result.disallowOverrides then {disallowOverrides: true} else {}
+      core.addMethod obj, result.name, result.fn, source, flags
+
+      output = core.call obj, 'greet', []
+      assert.strictEqual output, 'Hello, World'
+
+    it 'preserves relative indentation in method body', ->
+      source = '''
+        method foo
+          args x
+
+          if x > 0
+            return x
+          else
+            return 0
+      '''
+
+      result = Compiler.compileMethod source, {returnMetadata: true}
+
+      core = new Core()
+      obj = core.create()
+      core.addMethod obj, result.name, result.fn, source
+
+      assert.strictEqual core.call(obj, 'foo', [5]), 5
+      assert.strictEqual core.call(obj, 'foo', [-1]), 0
+
+    it 'throws error for missing method declaration', ->
+      source = '''
+        using foo
         args x
 
-        x * 2
-    '''
-
-    compiler = new Compiler()
-    compiler.compile source
-    code = compiler.generate()
-
-    assert.ok code.includes '@addMethod obj0, \'simple\''
-    assert.ok code.includes '() ->'
-    assert.ok code.includes '(ctx, args) ->'
-    assert.ok code.includes '[x] = args'
-
-  it 'handles methods without args', ->
-    source = '''
-      object 0
-
-      method noargs
-        using get
-
-        get 'value'
-    '''
-
-    compiler = new Compiler()
-    compiler.compile source
-    code = compiler.generate()
-
-    assert.ok code.includes '@addMethod obj0, \'noargs\''
-    assert.ok code.includes '(get) ->'
-    assert.ok code.includes '(ctx, args) ->'
-    assert.ok not code.includes '] = args' # No destructuring
-
-  it 'ignores comments and blank lines', ->
-    source = '''
-      # This is a comment
-      object 0
-
-      # Another comment
-      name sys
-
-      method test
-        # Method comment
-        args x
-
-        # Inline comment
         x + 1
-    '''
+      '''
 
-    compiler = new Compiler()
-    objects = compiler.compile source
+      assert.throws(
+        -> Compiler.compileMethod source
+        /must start with 'method/
+      )
 
-    assert.strictEqual objects[0].name, 'sys'
-    assert.ok objects[0].methods.test?
+  describe 'parseMethodSource', ->
+    it 'extracts method metadata without compiling', ->
+      source = '''
+        method test
+          using foo, bar
+          args x, y = 5
+          disallow overrides
 
-  it 'throws error for invalid syntax', ->
-    source = '''
-      object 0
-      invalid directive here
-    '''
+          x + y
+      '''
 
-    compiler = new Compiler()
-    assert.throws(
-      -> compiler.compile source
-      /Unexpected line/
-    )
+      metadata = Compiler.parseMethodSource source
 
-  it 'throws error for method outside object', ->
-    source = '''
-      method orphan
-        args x
-        x
-    '''
-
-    compiler = new Compiler()
-    assert.throws(
-      -> compiler.compile source
-      /method outside object definition/
-    )
-
-  it 'generates correct indentation for method body', ->
-    compiler = new Compiler()
-
-    source = '''
-object 0
-parent 1
-name sys
-
-method create
-  using create, $root, send, add_obj_name
-  args parent = $root, name
-
-  newObj = create parent
-
-  if typeof name is 'string' and name isnt ''
-    add_obj_name name, newObj
-    send newObj.root_name, name
-
-  newObj
-'''
-
-    compiler.compile source
-    generated = compiler.generate()
-
-    lines = generated.split '\n'
-
-    # Find the method body lines (after args destructuring)
-    bodyStartIdx = lines.findIndex (l) -> l.includes 'newObj = create parent'
-    assert.ok bodyStartIdx > 0, 'Should find method body'
-
-    # Check that method body lines have exactly 8 spaces of indent (in do block + inner fn)
-    bodyLine = lines[bodyStartIdx]
-    assert.match bodyLine, /^        [^ ]/, 'Method body should have 8 spaces indent, not more'
-    assert.match bodyLine, /^        newObj = create parent$/, 'First body line should be correctly indented'
-
-    # Check the if statement is also at 8 spaces
-    ifLineIdx = lines.findIndex (l) -> l.includes "if typeof name"
-    assert.ok ifLineIdx > bodyStartIdx, 'Should find if statement'
-    ifLine = lines[ifLineIdx]
-    assert.match ifLine, /^        if typeof name/, 'If statement should have 8 spaces indent'
-
-  it 'preserves relative indentation in method body', ->
-    compiler = new Compiler()
-
-    source = '''
-object 0
-name test
-
-method foo
-  args x
-
-  if x > 0
-    return x
-  else
-    return 0
-'''
-
-    compiler.compile source
-    generated = compiler.generate()
-    lines = generated.split '\n'
-
-    # Find the if and return statements
-    ifLineIdx = lines.findIndex (l) -> l.includes 'if x > 0'
-    returnLineIdx = lines.findIndex (l, i) -> i > ifLineIdx and l.includes 'return x'
-
-    assert.ok ifLineIdx > 0, 'Should find if statement'
-    assert.ok returnLineIdx > ifLineIdx, 'Should find return statement'
-
-    # The if should be at 8 spaces (in do block + inner fn), the return at 10 spaces
-    assert.match lines[ifLineIdx], /^        if x > 0$/, 'If should have 8 spaces'
-    assert.match lines[returnLineIdx], /^          return x$/, 'Return should have 10 spaces (8 + 2 for block)'
+      assert.strictEqual metadata.name, 'test'
+      assert.deepStrictEqual metadata.using, ['foo', 'bar']
+      assert.strictEqual metadata.argsRaw, 'x, y = 5'
+      assert.strictEqual metadata.disallowOverrides, true
+      assert.ok metadata.body.length > 0
