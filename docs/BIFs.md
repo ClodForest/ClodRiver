@@ -261,12 +261,94 @@ These are exposed from the Core class through `core.bifs`:
 
   Note: `emit` is auto-injected with ctx when imported.
 
+### Core Loading
+
+These BIFs enable modular loading of .clod files into separate Core instances, useful for packages, modules, and isolation.
+
+- ✅ **`load_core(path, holder)`** - Load .clod file into new Core
+  ```coffee
+  load_core: (ctx, path, holder) =>
+    fs   = require 'node:fs'
+    Core = require './core'
+
+    source    = fs.readFileSync path, 'utf8'
+    dump      = TextDump.fromString source
+    childCore = new Core()
+    dump.apply childCore
+
+    holder._childCore = childCore
+    holder
+  ```
+
+  Loads a .clod file and creates a new Core instance attached to the holder object. The child Core is completely isolated from the parent Core.
+
+  Note: `load_core` is auto-injected with ctx when imported.
+
+- ✅ **`core_toobj(holder, name)`** - Look up object in child Core
+  ```coffee
+  core_toobj: (ctx, holder, name) =>
+    throw new Error "No child core" unless holder._childCore?
+    holder._childCore.toobj name
+  ```
+
+  Returns an object from the child Core by name (e.g., `'$module'`). The returned object is a "foreign" object that can only be used with `core_call`.
+
+  Note: `core_toobj` is auto-injected with ctx when imported.
+
+- ✅ **`core_call(holder, obj, methodName, args...)`** - Call method in child Core
+  ```coffee
+  core_call: (ctx, holder, obj, methodName, args...) =>
+    throw new Error "No child core" unless holder._childCore?
+    holder._childCore.call obj, methodName, args
+  ```
+
+  Invokes a method on an object within the child Core. Returns the result, which may be:
+  - Plain values (strings, numbers, arrays, plain objects) - pass through unchanged
+  - CoreObject references - remain "foreign" objects usable only with `core_call`
+
+  Note: `core_call` is auto-injected with ctx when imported.
+
+- ✅ **`core_destroy(holder)`** - Remove child Core
+  ```coffee
+  core_destroy: (ctx, holder) =>
+    delete holder._childCore
+    holder
+  ```
+
+  Destroys the child Core attached to the holder, freeing resources.
+
+  Note: `core_destroy` is auto-injected with ctx when imported.
+
+**Usage Example - Loading a Module:**
+
+```coffee
+core.addMethod $sys, 'load_module', (load_core, core_toobj, core_call, create, $root) ->
+  (ctx, args) ->
+    [path] = args
+
+    # Create holder object for the child Core
+    holder = create $root
+
+    # Load the .clod file into a new Core
+    load_core path, holder
+
+    # Look up and call the module's exports method
+    $module = core_toobj holder, '$module'
+    exports = core_call holder, $module, 'exports'
+
+    # Process exports (which are plain data, not foreign objects)
+    for instruction in exports
+      # Apply instruction to main core...
+
+    holder  # Return holder for future queries
+```
+
 ## Import Resolution
 
 CoreMethod automatically resolves imports in this order:
 
 1. **BIFs** - Check `core.bifs[name]`
-   - Network BIFs (`listen`, `accept`, `emit`) are wrapped to auto-inject ctx
+   - Context-requiring BIFs (`listen`, `accept`, `emit`, `load_core`, `core_toobj`, `core_call`, `core_destroy`) are wrapped to auto-inject ctx
    - Other BIFs are passed as-is
 
 2. **$name** - Check `core.objectNames` for objects starting with `$`
@@ -336,8 +418,14 @@ core.addMethod $root, 'list_methods', (lookup_method) ->
 **Compilation:**
 - `compile`, `clod_eval`
 
+**Persistence:**
+- `textdump`
+
 **Network:**
 - `listen`, `accept`, `emit`
+
+**Core Loading:**
+- `load_core`, `core_toobj`, `core_call`, `core_destroy`
 
 **ExecutionContext:**
 - `cget`, `cset`, `cthis`, `definer`, `caller`, `sender`, `send`, `pass`

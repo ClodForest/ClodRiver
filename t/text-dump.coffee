@@ -121,6 +121,99 @@ describe 'TextDump', ->
         /method outside object definition/
       )
 
+    it 'parses object $name for new object with auto-ID', ->
+      source = '''
+        object $wizard
+
+        object $player
+      '''
+
+      textDump = TextDump.fromString source
+
+      assert.strictEqual Object.keys(textDump.objects).length, 2
+
+      wizardDef = Object.values(textDump.objects).find (o) -> o.name is 'wizard'
+      playerDef = Object.values(textDump.objects).find (o) -> o.name is 'player'
+
+      assert.ok wizardDef?, 'wizard should exist'
+      assert.ok playerDef?, 'player should exist'
+      assert.notStrictEqual wizardDef.id, playerDef.id, 'should have different IDs'
+
+    it 'parses object $name to switch to existing object', ->
+      source = '''
+        object $sys
+
+        object $root
+
+        object $sys
+        parent $root
+      '''
+
+      textDump = TextDump.fromString source
+
+      # Should only have 2 objects, not 3
+      assert.strictEqual Object.keys(textDump.objects).length, 2
+
+      sysDef = Object.values(textDump.objects).find (o) -> o.name is 'sys'
+      rootDef = Object.values(textDump.objects).find (o) -> o.name is 'root'
+
+      # $sys should now have $root as parent
+      assert.strictEqual sysDef.parent, rootDef.id
+
+    it 'parses parent $name reference', ->
+      source = '''
+        object 0
+        name root
+
+        object 1
+        parent $root
+        name child
+      '''
+
+      textDump = TextDump.fromString source
+
+      assert.strictEqual textDump.objects[1].parent, 0
+
+    it 'parses default_parent directive', ->
+      source = '''
+        object $root
+
+        default_parent $root
+
+        object $wizard
+
+        object $player
+      '''
+
+      textDump = TextDump.fromString source
+
+      rootDef = Object.values(textDump.objects).find (o) -> o.name is 'root'
+      wizardDef = Object.values(textDump.objects).find (o) -> o.name is 'wizard'
+      playerDef = Object.values(textDump.objects).find (o) -> o.name is 'player'
+
+      assert.strictEqual wizardDef.parent, rootDef.id
+      assert.strictEqual playerDef.parent, rootDef.id
+
+    it 'parses data block with $name keys', ->
+      source = '''
+        object $root
+
+        object $wizard
+        parent $root
+
+        data
+          {
+            $root: {name: 'wizard'}
+            $wizard: {level: 10}
+          }
+      '''
+
+      textDump = TextDump.fromString source
+
+      wizardDef = Object.values(textDump.objects).find (o) -> o.name is 'wizard'
+      assert.ok wizardDef.data?
+      assert.ok wizardDef.data.body.length > 0
+
   describe 'apply', ->
     it 'creates objects in core', ->
       source = '''
@@ -213,6 +306,115 @@ describe 'TextDump', ->
       assert.ok refs[1]?
       assert.strictEqual refs[0], core.toobj('$first')
       assert.strictEqual refs[1], core.toobj('$second')
+
+    it 'applies object $name with auto-ID', ->
+      source = '''
+        object $wizard
+
+        object $player
+      '''
+
+      textDump = TextDump.fromString source
+      core = new Core()
+      refs = textDump.apply core
+
+      wizard = core.toobj '$wizard'
+      player = core.toobj '$player'
+
+      assert.ok wizard?, 'wizard should exist'
+      assert.ok player?, 'player should exist'
+      assert.notStrictEqual wizard._id, player._id
+
+    it 'applies parent $name reference', ->
+      source = '''
+        object $root
+
+        object $child
+        parent $root
+      '''
+
+      textDump = TextDump.fromString source
+      core = new Core()
+      textDump.apply core
+
+      $root = core.toobj '$root'
+      $child = core.toobj '$child'
+
+      assert.strictEqual Object.getPrototypeOf($child), $root
+
+    it 'applies default_parent directive', ->
+      source = '''
+        object $root
+
+        default_parent $root
+
+        object $wizard
+
+        object $player
+      '''
+
+      textDump = TextDump.fromString source
+      core = new Core()
+      textDump.apply core
+
+      $root = core.toobj '$root'
+      $wizard = core.toobj '$wizard'
+      $player = core.toobj '$player'
+
+      assert.strictEqual Object.getPrototypeOf($wizard), $root
+      assert.strictEqual Object.getPrototypeOf($player), $root
+
+    it 'applies data block with $name keys', ->
+      source = '''
+        object $root
+
+        object $wizard
+        parent $root
+
+        data
+          {
+            $root: {name: 'wizard'}
+            $wizard: {level: 10}
+          }
+      '''
+
+      textDump = TextDump.fromString source
+      core = new Core()
+      textDump.apply core
+
+      $root = core.toobj '$root'
+      $wizard = core.toobj '$wizard'
+
+      assert.strictEqual $wizard._state[$root._id].name, 'wizard'
+      assert.strictEqual $wizard._state[$wizard._id].level, 10
+
+    it 'switches to existing object and adds methods', ->
+      source = '''
+        object $sys
+
+        object $root
+
+        object $sys
+        parent $root
+
+        method create
+          using create, add_obj_name, $root
+          args name
+
+          obj = create $root
+          add_obj_name name, obj
+          obj
+      '''
+
+      textDump = TextDump.fromString source
+      core = new Core()
+      textDump.apply core
+
+      $sys = core.toobj '$sys'
+      $root = core.toobj '$root'
+
+      assert.strictEqual Object.getPrototypeOf($sys), $root
+      assert.ok $sys.create?, 'should have create method'
 
   describe 'fromCore', ->
     it 'captures objects and names', ->

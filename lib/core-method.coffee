@@ -39,7 +39,10 @@ class CoreMethod
 
   _resolveImports: (core, ctx) ->
     # BIFs that require ctx as first argument
-    ctxBifs = ['textdump', 'listen', 'accept', 'emit']
+    ctxBifs = [
+      'textdump', 'listen', 'accept', 'emit',
+      'load_core', 'core_toobj', 'core_call', 'core_destroy'
+    ]
 
     imports = []
     for name in @_importNames
@@ -47,7 +50,8 @@ class CoreMethod
         bif = core.bifs[name]
         # Wrap ctx-requiring BIFs to auto-inject ctx
         if name in ctxBifs
-          imports.push (args...) -> bif(ctx, args...)
+          do (bif) ->
+            imports.push (args...) -> bif(ctx, args...)
         else
           imports.push bif
       else if name[0] is '$'

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ClodRiver is a modern MUD (Multi-User Dungeon) server written in Node.js/CoffeeScript that integrates Large Language Models for natural language parsing, dynamic world building, and intelligent NPC behavior. The project takes inspiration from ColdMUD's elegant design while leveraging modern JavaScript/CoffeeScript capabilities.
 
-**Current Status:** Object model v4.0 implemented and tested - Core, CoreObject, CoreMethod, and ExecutionContext classes fully functional with all tests passing.
+**Current Status:** Object model v4.0 implemented and tested - Core, CoreObject, CoreMethod, and ExecutionContext classes fully functional. Modular core loading BIFs added for package/module systems. Extended .clod format with `object $name`, `parent $name`, and `default_parent`. 134 tests passing.
 
 ## Language and Style
 
@@ -83,7 +83,7 @@ Available imports:
 - `pass(args...)` - Call parent's implementation of current method
 - `cthis()`, `definer()`, `caller()`, `sender()` - ColdMUD builtins
 - `$name` - Import objects by name (e.g., `$sys`, `$root`)
-- Any BIF name - `create`, `add_method`, `toint`, `tostr`, `children`, `lookup_method`, `compile`, `clod_eval`, `listen`, `accept`, `emit`
+- Any BIF name - `create`, `add_method`, `toint`, `tostr`, `children`, `lookup_method`, `compile`, `clod_eval`, `listen`, `accept`, `emit`, `load_core`, `core_toobj`, `core_call`, `core_destroy`
 
 ### Core API
 
@@ -230,6 +230,7 @@ ClodRiver/
 │   ├── text-dump.coffee           # TextDump tests
 │   ├── compiler.coffee            # Compiler tests
 │   ├── persistence.coffee         # freeze/thaw tests
+│   ├── load-core.coffee           # Core loading tests
 │   └── bifs.coffee                # BIF tests
 └── package.json
 ```
@@ -262,8 +263,10 @@ Renamed for clarity:
 CoreMethod automatically resolves imports in this order:
 
 1. **BIFs** - Check `core.bifs[name]`
-   - Network BIFs (`listen`, `accept`, `emit`) are wrapped to auto-inject ctx
-   - Persistence BIFs (`textdump`) are wrapped to auto-inject ctx
+   - Context-requiring BIFs are wrapped to auto-inject ctx:
+     - Network: `listen`, `accept`, `emit`
+     - Persistence: `textdump`
+     - Core Loading: `load_core`, `core_toobj`, `core_call`, `core_destroy`
    - Other BIFs are passed as-is
 2. **$name** - Check `core.objectNames` for objects starting with `$`
 3. **ctx methods** - Check ExecutionContext for builtins
@@ -318,9 +321,12 @@ The `.clod` format is used for persistent storage. Files contain object definiti
 ### Basic Structure
 
 ```coffee
-object <id>
-parent <parent_id>
-name <object_name>
+object <id>           # Create object with explicit numeric ID
+object $name          # Create new object with auto-ID, or switch to existing
+parent <parent_id>    # Set parent by numeric ID
+parent $name          # Set parent by name
+name <object_name>    # Register name for current object
+default_parent $name  # Set default parent for following new objects
 
 method <method_name>
   using <import1>, <import2>
@@ -330,6 +336,44 @@ method <method_name>
 
 data
   <CoffeeScript expression returning state object>
+```
+
+### Extended Syntax Features
+
+**`object $name`** - Either creates a new object or switches to an existing one:
+```coffee
+object $sys          # Creates new object with auto-ID, registers name 'sys'
+
+object $root         # Creates new object with auto-ID, registers name 'root'
+
+object $sys          # Switches back to existing $sys
+parent $root         # Now sets $sys's parent to $root
+
+method add_obj_name  # Adds method to $sys
+  # ...
+```
+
+**`default_parent $name`** - Sets the default parent for all following new objects:
+```coffee
+object $root
+
+default_parent $root
+
+object $wizard       # Automatically inherits from $root
+
+object $player       # Also inherits from $root
+```
+
+**`$name` in data sections** - Use names instead of numeric IDs:
+```coffee
+object $wizard
+parent $root
+
+data
+  {
+    $root: {name: 'wizard'}
+    $wizard: {level: 10, xp: 0}
+  }
 ```
 
 ### Data Blocks
@@ -404,6 +448,51 @@ refs   = dump.apply core
 # Namespace IDs in state are automatically remapped
 ```
 
+## Modular Core Loading
+
+The Core Loading BIFs enable loading .clod files into separate, isolated Core instances. This is useful for:
+- **Modules**: Load a module .clod, call its exports, apply to main core
+- **Packages**: Load/unload packages that add functionality
+- **Isolation**: Run untrusted or experimental code in a separate Core
+
+### Core Loading BIFs
+
+- `load_core(path, holder)` - Load .clod file into new Core attached to holder
+- `core_toobj(holder, name)` - Look up object by name in child Core
+- `core_call(holder, obj, methodName, args...)` - Call method on child Core object
+- `core_destroy(holder)` - Remove child Core from holder
+
+### Usage Example
+
+```coffee
+core.addMethod $sys, 'load_module', (load_core, core_toobj, core_call, create, $root) ->
+  (ctx, args) ->
+    [path] = args
+
+    # Create holder object for the child Core
+    holder = create $root
+
+    # Load the .clod file into a new Core
+    load_core path, holder
+
+    # Look up and call the module's exports method
+    $module = core_toobj holder, '$module'
+    exports = core_call holder, $module, 'exports'
+
+    # Process exports (which are plain data, not foreign objects)
+    for instruction in exports
+      # Apply instruction to main core...
+
+    holder  # Return holder for future queries
+```
+
+### Key Design Points
+
+- **Foreign Objects Stay Foreign**: Objects from child Core are NOT integrated into parent Core. They keep their original IDs and can only be called via `core_call`, not `send`.
+- **Data Crossing Boundary**: Plain values (strings, numbers, arrays, objects) pass through unchanged. CoreObject references remain "foreign objects".
+- **Child Core Isolation**: Child Core has its own `$sys` and `$root`. No implicit cross-core references.
+- **Non-Serializable**: `_childCore` is stored directly on holder object and not persisted through freeze/thaw.
+
 ## Module Pattern
 
 ```coffee
@@ -466,7 +555,7 @@ Tests register CoffeeScript via `node -r coffeescript/register`.
 - ✅ lib/text-dump.coffee - TextDump with fromString/fromCore/apply/toString
 - ✅ lib/compiler.coffee - Compiler with compileMethod/parseMethodSource
 - ✅ lib/server.coffee - Server with data block loading and namespace remapping
-- ✅ lib/bifs.coffee - All 15 BIFs implemented (including textdump)
+- ✅ lib/bifs.coffee - All 19 BIFs implemented (including core loading)
 - ✅ lib/errors.coffee - Error classes
 - ✅ t/core-object.coffee - CoreObject tests passing
 - ✅ t/core.coffee - Core tests passing
@@ -474,8 +563,9 @@ Tests register CoffeeScript via `node -r coffeescript/register`.
 - ✅ t/text-dump.coffee - TextDump tests passing
 - ✅ t/compiler.coffee - Compiler tests passing
 - ✅ t/persistence.coffee - freeze/thaw tests passing
+- ✅ t/load-core.coffee - Core loading tests passing
 - ✅ t/bifs.coffee - BIF tests passing
-- ✅ 116 tests passing
+- ✅ 134 tests passing
 
 ## Related Documentation
 

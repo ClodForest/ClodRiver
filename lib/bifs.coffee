@@ -150,6 +150,31 @@ class BIFs
 
     connection._socket.write data
 
+  # Core loading
+  load_core: (ctx, path, holder) =>
+    fs   = require 'node:fs'
+    Core = require './core'
+
+    source    = fs.readFileSync path, 'utf8'
+    dump      = TextDump.fromString source
+    childCore = new Core()
+    dump.apply childCore
+
+    holder._childCore = childCore
+    holder
+
+  core_toobj: (ctx, holder, name) =>
+    throw new Error "No child core" unless holder._childCore?
+    holder._childCore.toobj name
+
+  core_call: (ctx, holder, obj, methodName, args...) =>
+    throw new Error "No child core" unless holder._childCore?
+    holder._childCore.call obj, methodName, args
+
+  core_destroy: (ctx, holder) =>
+    delete holder._childCore
+    holder
+
   # Get all BIF names
   @bifNames: ->
     [
@@ -158,7 +183,8 @@ class BIFs
       'children', 'lookup_method',
       'compile', 'clod_eval',
       'textdump',
-      'listen', 'accept', 'emit'
+      'listen', 'accept', 'emit',
+      'load_core', 'core_toobj', 'core_call', 'core_destroy'
     ]
 
 module.exports = BIFs

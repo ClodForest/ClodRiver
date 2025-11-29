@@ -1,24 +1,26 @@
 # 'VR' extensions on ClodMUD
 # v0.0.0
 # Simple ownership model
-# vim: ft=coffee
+# - $owned:     tracks owned objects
+# - $owner:     tracks owners
+# - $group:     collection of owners
 
-# $ownership: common parent for this module
-
-object
-parent $root
-name ownership
+object 0
+name module
 
 method module_info
   using send
 
   version: 'v0.0.0'
   name:    'ownership'
-  contents: [$ownership, send $ownership.descendents]
+  contents: send $ownership.descendents
 
-object
-parent $ownership
-name ownership_group
+object       $ownership
+parent       null
+
+default_root $ownership
+
+object $ownership_group
 
 method init_ownership_group
   using get, set
@@ -29,7 +31,7 @@ method is_member_of
   using get, set, send, $ownership_group
   args candidate, group
 
-  if group instanceof this
+  if group instanceof @
     return group.is_member candidate
   else
     return group is candidate
@@ -44,15 +46,18 @@ method is_member
 
   false
 
-
-object
-parent $ownership
-name owned
+object $owned
 
 method init_owned
   using get, set
 
-  set owners: get('owners') ? []
+  set owners: [] unless get 'owners'
+
+method proxy_for
+  using sender
+  args target
+
+  set {target}
 
 method owned_by
   disallow overrides
@@ -73,3 +78,4 @@ method add_owner
     throw "permissions"
 
 
+# vim: ft=coffee

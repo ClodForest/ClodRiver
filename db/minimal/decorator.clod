@@ -15,9 +15,8 @@ See the 'vr' module for examples.
 ###
 
 # $decoartors: management class for $decorator and $decorated
-object
+object $decorators
 parent $root
-name decorators
 
 method init_decorators
   using get, set
@@ -32,9 +31,8 @@ method has_decorator
   decorator in send target.decorations
 
 # $decorated: something which can be extended by adding decoration objects
-object
-parent $vr
-name decorated
+object $decorated
+parent $decorators
 
 method init_decorated
   disallow overrides

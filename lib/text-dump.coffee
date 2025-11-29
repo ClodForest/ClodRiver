@@ -18,6 +18,9 @@ class TextDump
   _parse: (source) ->
     lines = source.split '\n'
     @objects = {}
+    @nameToId = {}
+    @defaultParent = null
+    @nextAutoId = 0
     @currentObject = null
     @currentMethod = null
     @inMethod = false
@@ -33,11 +36,13 @@ class TextDump
     trimmed = line.trim()
     return if trimmed is '' or trimmed[0] is '#'
 
+    # object <numeric id>
     if match = trimmed.match /^object\s+(\d+)$/
       id = parseInt match[1]
+      @nextAutoId = Math.max @nextAutoId, id + 1
       @currentObject = {
         id:       id
-        parent:   null
+        parent:   @defaultParent
         name:     null
         methods:  {}
         data:     null
@@ -48,14 +53,57 @@ class TextDump
       @inData = false
       return
 
+    # object $name - either switch to existing or create new
+    if match = trimmed.match /^object\s+\$(\w+)$/
+      name = match[1]
+      if @nameToId[name]?
+        # Switch to existing object
+        id = @nameToId[name]
+        @currentObject = @objects[id]
+      else
+        # Create new object with auto-ID
+        id = @nextAutoId++
+        @currentObject = {
+          id:       id
+          parent:   @defaultParent
+          name:     name
+          methods:  {}
+          data:     null
+          lineNum:  lineNum
+        }
+        @objects[id] = @currentObject
+        @nameToId[name] = id
+      @inMethod = false
+      @inData = false
+      return
+
+    # parent $name
+    if match = trimmed.match /^parent\s+\$(\w+)$/
+      throw new Error "parent outside object definition" unless @currentObject?
+      name = match[1]
+      throw new Error "Unknown object $#{name}" unless @nameToId[name]?
+      @currentObject.parent = @nameToId[name]
+      return
+
+    # parent <numeric id>
     if match = trimmed.match /^parent\s+(\d+)$/
       throw new Error "parent outside object definition" unless @currentObject?
       @currentObject.parent = parseInt match[1]
       return
 
+    # default_parent $name
+    if match = trimmed.match /^default_parent\s+\$(\w+)$/
+      name = match[1]
+      throw new Error "Unknown object $#{name}" unless @nameToId[name]?
+      @defaultParent = @nameToId[name]
+      return
+
+    # name <identifier>
     if match = trimmed.match /^name\s+(\w+)$/
       throw new Error "name outside object definition" unless @currentObject?
-      @currentObject.name = match[1]
+      name = match[1]
+      @currentObject.name = name
+      @nameToId[name] = @currentObject.id
       return
 
     if match = trimmed.match /^method\s+(\w+)$/
@@ -159,11 +207,19 @@ class TextDump
 
     sortedIds = Object.keys(@objects).map((id) -> parseInt id).sort (a, b) -> a - b
 
+    # First pass: create all objects without parents
     for id in sortedIds
       objDef = @objects[id]
-      parent = if objDef.parent? then objRefs[objDef.parent] else null
-      newObj = core.create parent, objDef.name
+      newObj = core.create null, objDef.name
       objRefs[id] = newObj
+
+    # Second pass: set up parent relationships (handles forward references)
+    for id in sortedIds
+      objDef = @objects[id]
+      if objDef.parent?
+        parent = objRefs[objDef.parent]
+        child = objRefs[id]
+        core.change_parent child, parent if parent?
 
     for id in sortedIds
       objDef = @objects[id]
@@ -199,7 +255,7 @@ class TextDump
             else
               obj._state[namespaceId] = obj._deserializeValue data, (refId) -> objRefs[refId]
         else if objDef.data.body?
-          source = @_generateDataSource objDef.data
+          source = @_generateDataSource objDef.data, objRefs
           try
             CoffeeScript = require 'coffeescript'
             jsCode = CoffeeScript.compile source, {bare: true}
@@ -209,13 +265,22 @@ class TextDump
             ctx = new ExecutionContext core, obj, dummyMethod
             stateData = fn ctx
 
-            for oldNamespaceId, data of stateData
-              newObj = objRefs[parseInt(oldNamespaceId)]
-              if newObj?
-                newNamespaceId = newObj._id
-                obj._state[newNamespaceId] = data
+            for namespaceKey, data of stateData
+              # Handle $name keys by resolving to actual object
+              if typeof namespaceKey is 'string' and namespaceKey[0] is '$'
+                name = namespaceKey[1..]
+                targetObj = core.toobj namespaceKey
+                if targetObj?
+                  obj._state[targetObj._id] = data
+                else
+                  console.error "Unknown object #{namespaceKey} in data block"
               else
-                obj._state[oldNamespaceId] = data
+                # Numeric ID - remap to new object ID
+                newObj = objRefs[parseInt(namespaceKey)]
+                if newObj?
+                  obj._state[newObj._id] = data
+                else
+                  obj._state[namespaceKey] = data
           catch error
             console.error "Failed to apply data for object #{id}:", error.message
 
@@ -304,7 +369,7 @@ class TextDump
 
     lines.join '\n'
 
-  _generateDataSource: (dataDef) ->
+  _generateDataSource: (dataDef, objRefs = {}) ->
     lines = []
     lines.push "(ctx) ->"
 
