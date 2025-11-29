@@ -152,3 +152,119 @@ describe 'Compiler', ->
       assert.strictEqual metadata.argsRaw, 'x, y = 5'
       assert.strictEqual metadata.disallowOverrides, true
       assert.ok metadata.body.length > 0
+
+    it 'parses vars directive', ->
+      source = '''
+        method test
+          vars foo, bar
+
+          foo ?= 42
+          bar = foo + 1
+      '''
+
+      metadata = Compiler.parseMethodSource source
+
+      assert.deepStrictEqual metadata.vars, ['foo', 'bar']
+
+  describe 'vars directive', ->
+    it 'compiles method with vars', ->
+      source = '''
+        method test
+          vars counter
+
+          counter ?= 0
+          counter += 1
+      '''
+
+      fn = Compiler.compileMethod source
+
+      assert.ok typeof fn is 'function'
+
+    it 'loads vars from state at start', ->
+      source = '''
+        method get_counter
+          vars counter
+
+          counter
+      '''
+
+      result = Compiler.compileMethod source, {returnMetadata: true}
+
+      core = new Core()
+      obj = core.create()
+      obj._state[obj._id] = {counter: 42}
+
+      core.addMethod obj, result.name, result.fn, source
+
+      output = core.call obj, 'get_counter', []
+      assert.strictEqual output, 42
+
+    it 'saves vars to state at end', ->
+      source = '''
+        method increment
+          vars counter
+
+          counter ?= 0
+          counter += 1
+      '''
+
+      result = Compiler.compileMethod source, {returnMetadata: true}
+
+      core = new Core()
+      obj = core.create()
+
+      core.addMethod obj, result.name, result.fn, source
+
+      core.call obj, 'increment', []
+      assert.strictEqual obj._state[obj._id].counter, 1
+
+      core.call obj, 'increment', []
+      assert.strictEqual obj._state[obj._id].counter, 2
+
+    it 'saves vars even on exception', ->
+      source = '''
+        method failing
+          vars counter
+
+          counter ?= 0
+          counter += 1
+          throw new Error "oops"
+      '''
+
+      result = Compiler.compileMethod source, {returnMetadata: true}
+
+      core = new Core()
+      obj = core.create()
+
+      core.addMethod obj, result.name, result.fn, source
+
+      assert.throws -> core.call obj, 'failing', []
+
+      assert.strictEqual obj._state[obj._id].counter, 1
+
+    it 'works with using and args together', ->
+      source = '''
+        method add_to_total
+          using toint, cthis
+          args amount
+          vars total
+
+          total ?= 0
+          total += amount
+          total
+      '''
+
+      result = Compiler.compileMethod source, {returnMetadata: true}
+
+      core = new Core()
+      obj = core.create()
+
+      core.addMethod obj, result.name, result.fn, source
+
+      output = core.call obj, 'add_to_total', [10]
+      assert.strictEqual output, 10
+
+      output = core.call obj, 'add_to_total', [5]
+      assert.strictEqual output, 15
+
+      assert.strictEqual obj._state[obj._id].total, 15

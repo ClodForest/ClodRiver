@@ -331,6 +331,8 @@ default_parent $name  # Set default parent for following new objects
 method <method_name>
   using <import1>, <import2>
   args <arg1>, <arg2> = <default>
+  vars <var1>, <var2>           # Auto-load/save state variables
+  disallow overrides
 
   <method body>
 
@@ -375,6 +377,31 @@ data
     $wizard: {level: 10, xp: 0}
   }
 ```
+
+**`vars` directive** - Auto-loads variables from state at method start, auto-saves at end:
+```coffee
+method increment
+  vars counter
+
+  counter ?= 0
+  counter += 1
+```
+
+This compiles to:
+```coffee
+() ->
+  (ctx, args) ->
+    {counter} = @_state[ctx._definer._id] ? {}
+
+    try
+      counter ?= 0
+      counter += 1
+    finally
+      @_state[ctx._definer._id] ?= {}
+      Object.assign @_state[ctx._definer._id], {counter}
+```
+
+The try/finally ensures variables are saved even if an exception occurs. This eliminates the need for explicit `cget`/`cset` calls in most cases.
 
 ### Data Blocks
 

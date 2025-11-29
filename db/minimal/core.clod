@@ -38,20 +38,20 @@ method del_obj_name
   del_obj_name name
 
 method startup
-  using cget, cset, send, $connection, cthis
-  args port = 7777, addr = 'localhost'
+  using send, $connection, cthis
+  args p = 7777, a = 'localhost'
+  vars port, addr
 
-  cset {port, addr}
+  port = p
+  addr = a
   send cthis(), 'spawn_listener', $connection, {port, addr}
 
 method spawn_listener
-  using listen, cget, send
+  using listen, send
   args connection_class, options
+  vars port, addr
 
-  if not options
-    port = cget 'port'
-    addr = cget 'addr'
-  else
+  if options
     {port = 7777, addr = 'localhost'} = options
 
   newListener = send connection_class, 'spawn'
@@ -129,24 +129,24 @@ method spawn
   send $sys, 'create', cthis()
 
 method root_name
-  using send, cset, cget, $sys, toint, cthis
+  using send, $sys, toint, cthis
   args newName
+  vars name
 
   if newName
     try
-      send $sys, 'del_obj_name', cget('name')
+      send $sys, 'del_obj_name', name
 
     send $sys, 'add_obj_name', newName, cthis()
-    cset {name: newName}
+    name = newName
   else
-    if name = cget 'name'
+    if name
       return name
 
     '#' + toint(cthis())
 
 
-object 2
-name connection
+object $connection
 
 method spawn
   using $sys, send, cthis
@@ -167,15 +167,15 @@ method connected
     send $admin, 'set_connection', cthis()
 
 method received
-  using emit, send, $admin, cget, cset, cthis
-  args buf
+  using emit, send, $admin
+  args incomingBuf
+  vars buf
 
-  if not cget 'buf'
-    cset {buf: Buffer.from('')}
+  buf ?= Buffer.from ''
 
-  currentBuf = Buffer.concat [cget('buf'), buf]
+  currentBuf = Buffer.concat [buf, incomingBuf]
   lines = currentBuf.toString().split /\r?\n/
-  cset {buf: Buffer.from(lines[lines.length - 1])}
+  buf = Buffer.from lines[lines.length - 1]
 
   try
     for line in lines[...-1]
@@ -196,14 +196,13 @@ method disconnected
   # TODO: cleanup
 
 
-object 3
-name admin
+object $admin
 
 method set_connection
-  using cset
-  args connection
+  args conn
+  vars connection
 
-  cset {connection: connection}
+  connection = conn
 
 method receive_line
   using send, clod_eval, tostr, cthis
@@ -213,8 +212,8 @@ method receive_line
   send cthis(), 'notify', "=> #{tostr result}"
 
 method notify
-  using send, cget
+  using send
   args s
+  vars connection
 
-  connection = cget 'connection'
   send connection, 'emit', s

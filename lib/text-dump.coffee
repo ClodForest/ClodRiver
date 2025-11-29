@@ -112,6 +112,7 @@ class TextDump
         name:              match[1]
         using:             []
         argsRaw:           null
+        vars:              []
         body:              []
         disallowOverrides: false
         lineNum:           lineNum
@@ -139,6 +140,10 @@ class TextDump
 
       if match = trimmed.match /^args\s+(.+)$/
         @currentMethod.argsRaw = match[1]
+        return
+
+      if match = trimmed.match /^vars\s+(.+)$/
+        @currentMethod.vars = match[1].split(/\s*,\s*/)
         return
 
       if trimmed is 'disallow overrides'
@@ -339,6 +344,7 @@ class TextDump
 
   _generateMethodSource: (methodDef) ->
     lines = []
+    hasVars = methodDef.vars?.length > 0
 
     if methodDef.using?.length > 0
       imports = methodDef.using.join ', '
@@ -351,6 +357,16 @@ class TextDump
     if methodDef.argsRaw and methodDef.argsRaw.trim() isnt ''
       lines.push "    [#{methodDef.argsRaw}] = args"
       lines.push ""
+
+    # Load vars from state
+    if hasVars
+      varsList = methodDef.vars.join ', '
+      lines.push "    {#{varsList}} = @_state[ctx._definer._id] ? {}"
+      lines.push ""
+      lines.push "    try"
+
+    # Determine base indent for body
+    bodyIndent = if hasVars then "      " else "    "
 
     minIndent = Infinity
     for bodyLine in (methodDef.body or [])
@@ -365,7 +381,13 @@ class TextDump
         lines.push ''
       else
         stripped = bodyLine.substring minIndent
-        lines.push "    #{stripped}"
+        lines.push "#{bodyIndent}#{stripped}"
+
+    # Save vars to state in finally block
+    if hasVars
+      lines.push "    finally"
+      lines.push "      @_state[ctx._definer._id] ?= {}"
+      lines.push "      Object.assign @_state[ctx._definer._id], {#{varsList}}"
 
     lines.join '\n'
 

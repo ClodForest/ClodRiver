@@ -26,6 +26,7 @@ class Compiler
       name:              null
       using:             []
       argsRaw:           null
+      vars:              []
       body:              []
       disallowOverrides: false
     }
@@ -54,6 +55,10 @@ class Compiler
           result.argsRaw = match[1]
           continue
 
+        if match = trimmed.match /^vars\s+(.+)$/
+          result.vars = match[1].split(/\s*,\s*/)
+          continue
+
         if trimmed is 'disallow overrides'
           result.disallowOverrides = true
           continue
@@ -66,6 +71,7 @@ class Compiler
 
   @_generateFunctionSource: (metadata) ->
     lines = []
+    hasVars = metadata.vars?.length > 0
 
     if metadata.using.length > 0
       imports = metadata.using.join ', '
@@ -78,6 +84,16 @@ class Compiler
     if metadata.argsRaw and metadata.argsRaw.trim() isnt ''
       lines.push "    [#{metadata.argsRaw}] = args"
       lines.push ""
+
+    # Load vars from state
+    if hasVars
+      varsList = metadata.vars.join ', '
+      lines.push "    {#{varsList}} = @_state[ctx._definer._id] ? {}"
+      lines.push ""
+      lines.push "    try"
+
+    # Determine base indent for body
+    bodyIndent = if hasVars then "      " else "    "
 
     minIndent = Infinity
     for bodyLine in metadata.body
@@ -92,7 +108,13 @@ class Compiler
         lines.push ''
       else
         stripped = bodyLine.substring minIndent
-        lines.push "    #{stripped}"
+        lines.push "#{bodyIndent}#{stripped}"
+
+    # Save vars to state in finally block
+    if hasVars
+      lines.push "    finally"
+      lines.push "      @_state[ctx._definer._id] ?= {}"
+      lines.push "      Object.assign @_state[ctx._definer._id], {#{varsList}}"
 
     lines.join '\n'
 
