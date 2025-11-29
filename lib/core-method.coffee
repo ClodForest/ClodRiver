@@ -18,7 +18,7 @@ class CoreMethod
   serialize: ->
     name:              @name
     definer:           @definer._id
-    source:            @source
+    source:            @source ? @fn.toString()
     disallowOverrides: @disallowOverrides
 
   @deserialize: (data, resolver, compileFn) ->

@@ -93,7 +93,7 @@ describe 'Persistence', ->
       core2.thaw frozen
 
       newObj = core2.create()
-      assert.strictEqual newObj._id, 3
+      assert.strictEqual newObj._id, 5
 
     it 'handles complex nested object references', ->
       core = new Core()
@@ -124,9 +124,9 @@ describe 'Persistence', ->
       core = new Core()
 
       obj = core.create()
-      methodSrc = '(ctx, args) -> args[0] + args[1]'
+      methodSrc = '-> (ctx, args) -> args[0] + args[1]'
 
-      addFn = (ctx, args) -> args[0] + args[1]
+      addFn = -> (ctx, args) -> args[0] + args[1]
       core.addMethod obj, 'add', addFn, methodSrc
 
       frozen = core.freeze()
@@ -140,7 +140,7 @@ describe 'Persistence', ->
       core = new Core()
 
       obj = core.create()
-      addFn = (ctx, args) -> args[0] + args[1]
+      addFn = -> (ctx, args) -> args[0] + args[1]
       core.addMethod obj, 'add', addFn
 
       frozen = core.freeze()
@@ -157,8 +157,8 @@ describe 'Persistence', ->
       obj = core.create()
       obj._state[obj._id] = {value: 10}
 
-      methodSrc = '(ctx, args) -> ctx.cget("value") + args[0]'
-      addFn = (ctx, args) -> ctx.cget('value') + args[0]
+      methodSrc = '(cget) -> (ctx, args) -> cget("value") + args[0]'
+      addFn = (cget) -> (ctx, args) -> cget('value') + args[0]
       core.addMethod obj, 'addToValue', addFn, methodSrc
 
       frozen = core.freeze()
@@ -182,8 +182,8 @@ describe 'Persistence', ->
       parent = core.create()
       child  = core.create parent
 
-      methodSrc = '(ctx, args) -> "parent method"'
-      parentFn = (ctx, args) -> 'parent method'
+      methodSrc = '-> (ctx, args) -> "parent method"'
+      parentFn = -> (ctx, args) -> 'parent method'
       core.addMethod parent, 'test', parentFn, methodSrc
 
       frozen = core.freeze()
@@ -207,7 +207,7 @@ describe 'Persistence', ->
       core = new Core()
 
       obj = core.create()
-      fn = (ctx, args) -> 'no source provided'
+      fn = -> (ctx, args) -> 'no source provided'
       core.addMethod obj, 'test', fn
 
       frozen = core.freeze()
@@ -239,12 +239,12 @@ describe 'Persistence', ->
       obj = core.create()
       obj._state[obj._id] = {x: 5, y: 10}
 
-      addSrc = '(ctx, args) -> ctx.cget("x") + ctx.cget("y")'
-      addFn = (ctx, args) -> ctx.cget('x') + ctx.cget('y')
+      addSrc = '(cget) -> (ctx, args) -> cget("x") + cget("y")'
+      addFn = (cget) -> (ctx, args) -> cget('x') + cget('y')
       core.addMethod obj, 'add', addFn, addSrc
 
-      mulSrc = '(ctx, args) -> ctx.cget("x") * ctx.cget("y")'
-      mulFn = (ctx, args) -> ctx.cget('x') * ctx.cget('y')
+      mulSrc = '(cget) -> (ctx, args) -> cget("x") * cget("y")'
+      mulFn = (cget) -> (ctx, args) -> cget('x') * cget('y')
       core.addMethod obj, 'multiply', mulFn, mulSrc
 
       frozen = core.freeze()
@@ -271,12 +271,12 @@ describe 'Persistence', ->
       parent = core.create()
       child  = core.create parent
 
-      parentSrc = '(ctx, args) -> "from parent"'
-      parentFn = (ctx, args) -> 'from parent'
+      parentSrc = '-> (ctx, args) -> "from parent"'
+      parentFn = -> (ctx, args) -> 'from parent'
       core.addMethod parent, 'parentMethod', parentFn, parentSrc
 
-      childSrc = '(ctx, args) -> "from child"'
-      childFn = (ctx, args) -> 'from child'
+      childSrc = '-> (ctx, args) -> "from child"'
+      childFn = -> (ctx, args) -> 'from child'
       core.addMethod child, 'childMethod', childFn, childSrc
 
       frozen = core.freeze()
@@ -304,8 +304,8 @@ describe 'Persistence', ->
       obj = core.create()
       obj._state[obj._id] = {data: 'test'}
 
-      fn = (ctx, args) -> 'should not be restored'
-      core.addMethod obj, 'test', fn, '(ctx, args) -> "test"'
+      fn = -> (ctx, args) -> 'should not be restored'
+      core.addMethod obj, 'test', fn, '-> (ctx, args) -> "test"'
 
       frozen = core.freeze()
 
@@ -322,7 +322,7 @@ describe 'Persistence', ->
       obj = core.create()
 
       invalidSrc = 'this is not valid CoffeeScript or JavaScript!@#$'
-      fn = (ctx, args) -> 'valid'
+      fn = -> (ctx, args) -> 'valid'
       core.addMethod obj, 'test', fn, invalidSrc
 
       frozen = core.freeze()

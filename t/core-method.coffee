@@ -169,7 +169,7 @@ test 'CoreMethod: serialize with defaults', ->
 
   assert.strictEqual serialized.name, 'test'
   assert.strictEqual serialized.definer, $root._id
-  assert.strictEqual serialized.source, null
+  assert.ok serialized.source.includes('42')
   assert.strictEqual serialized.disallowOverrides, false
 
 test 'CoreMethod: deserialize reconstructs method', ->
