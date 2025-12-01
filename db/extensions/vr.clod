@@ -1,0 +1,53 @@
+object $vr
+default_root $vr
+
+object $container
+
+method init_container
+  disallow overrides
+  vars contents
+  using sender, caller, $root
+
+  if sender() is @ and caller() is $root
+    contents = []
+
+method contents
+  vars contents
+
+  contents
+
+method contained_leaving
+  vars contents
+  using sender()
+
+  contents = contents.filter (item) -> item isnt sender()
+
+method contained_entering
+  vars contents
+  using sender()
+
+  contents.push sender()
+
+
+object $contained
+
+method move_to
+  vars location
+  args destination
+
+  send location?.contained_leaving
+  destination.contained_entering()
+
+
+object $room
+parent $container
+
+method init_room
+  vars exits
+
+  if sender() is @ and caller() is $root
+    exits = []
+
+object $exit
+parent $described
+

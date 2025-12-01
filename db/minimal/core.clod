@@ -14,7 +14,7 @@ method create
 
   if typeof name is 'string' and name isnt ''
     add_obj_name name, newObj
-    send newObj, 'root_name', name
+    send newObj.root_name, name
 
   newObj
 
@@ -44,7 +44,7 @@ method startup
 
   port = p
   addr = a
-  send cthis(), 'spawn_listener', $connection, {port, addr}
+  send cthis().spawn_listener, $connection, {port, addr}
 
 method spawn_listener
   using listen, send
@@ -54,7 +54,7 @@ method spawn_listener
   if options
     {port = 7777, addr = 'localhost'} = options
 
-  newListener = send connection_class, 'spawn'
+  newListener = send connection_class.spawn
   listen newListener, {port, addr}
 
 
@@ -74,11 +74,11 @@ method eval_on
   fn.name = name
 
   try
-    send $sys, 'add_methods', cthis(), {[name]: fn}
-    result = send cthis(), name
+    send $sys.add_methods, cthis(), {[name]: fn}
+    result = send cthis()[name]
 
   finally
-    send $sys, 'rm_method', cthis(), fn
+    send $sys.rm_method, cthis(), fn
 
   return result
 
@@ -92,7 +92,7 @@ method children
 method descendents
   using children, send
 
-  children().concat (children().map (child) -> send child, 'descendents')...
+  children().concat (children().map (child) -> send child.descendents)...
 
 method lookup_method
   disallow overrides
@@ -112,10 +112,10 @@ method init
 
   for p in cthis().parents().reverse()
     try
-      methodName = "init_#{send p, 'root_name'}"
+      methodName = "init_#{send p.root_name}"
 
-      if (found = send p, 'lookup_method', methodName) and found.definer is p
-        send cthis(), methodName
+      if (found = p[methodName]) and found.definer is p
+        send cthis()[methodName]
 
     catch e
       errors[toint p] = e
@@ -126,7 +126,7 @@ method spawn
   disallow overrides
   using $sys, send, cthis
 
-  send $sys, 'create', cthis()
+  send $sys.create, cthis()
 
 method root_name
   using send, $sys, toint, cthis
@@ -135,9 +135,9 @@ method root_name
 
   if newName
     try
-      send $sys, 'del_obj_name', name
+      send $sys.del_obj_name, name
 
-    send $sys, 'add_obj_name', newName, cthis()
+    send $sys.add_obj_name, newName, cthis()
     name = newName
   else
     if name
@@ -151,7 +151,7 @@ object $connection
 method spawn
   using $sys, send, cthis
 
-  result = send $sys, 'create', cthis()
+  result = send $sys.create, cthis()
   return result
 
 method connected
@@ -160,11 +160,11 @@ method connected
 
   if socketInfo
     # Called as listener - spawn new connection and accept it
-    connection = send $connection, 'spawn'
+    connection = send $connection.spawn
     accept connection
   else
     # Called as client connection - tell $admin about us
-    send $admin, 'set_connection', cthis()
+    send $admin.set_connection, cthis()
 
 method received
   using emit, send, $admin
@@ -179,7 +179,7 @@ method received
 
   try
     for line in lines[...-1]
-      send $admin, 'receive_line', line
+      send $admin.receive_line, line
 
   catch e
     emit e.toString()
@@ -209,11 +209,11 @@ method receive_line
   args s
 
   result = clod_eval s
-  send cthis(), 'notify', "=> #{tostr result}"
+  send cthis().notify, "=> #{tostr result}"
 
 method notify
   using send
   args s
   vars connection
 
-  send connection, 'emit', s
+  send connection.emit, s
