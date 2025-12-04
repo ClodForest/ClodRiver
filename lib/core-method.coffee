@@ -41,7 +41,8 @@ class CoreMethod
     # BIFs that require ctx as first argument
     ctxBifs = [
       'textdump', 'listen', 'accept', 'emit',
-      'load_core', 'core_toobj', 'core_call', 'core_destroy'
+      'load_core', 'core_toobj', 'core_call', 'core_destroy',
+      'list_methods'
     ]
 
     imports = []

@@ -257,9 +257,9 @@ test 'CoreMethod: _resolveImports resolves ctx methods', ->
   $root = core.toobj '$root'
   obj = core.create $root
 
-  fn = (cget, cset, cthis) -> (ctx, args) -> 42
+  fn = (cget, cset, definer) -> (ctx, args) -> 42
   method = new CoreMethod 'test', fn, $root
-  method._importNames = ['cget', 'cset', 'cthis']
+  method._importNames = ['cget', 'cset', 'definer']
 
   ctx = new (require '../lib/execution-context') core, obj, method
   imports = method._resolveImports core, ctx
@@ -270,7 +270,7 @@ test 'CoreMethod: _resolveImports resolves ctx methods', ->
   assert.strictEqual typeof imports[2], 'function'
   assert.strictEqual imports[0], ctx.cget
   assert.strictEqual imports[1], ctx.cset
-  assert.strictEqual imports[2], ctx.cthis
+  assert.strictEqual imports[2], ctx.definer
 
 test 'CoreMethod: _resolveImports returns null for unknown', ->
   core = new Core()

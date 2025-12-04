@@ -1,0 +1,50 @@
+object 0
+parent 1
+name sys
+
+method lookup_obj_name
+  using toobj
+  args name
+
+  toobj name
+
+method loaded
+  using $test, send
+  args module
+
+  send module.request_methods,
+    sys:  [/.*/]
+    root: [/.*/]
+
+  for test in send $test.descendents
+    [send(test.root_name), send test.run]
+
+
+object 1
+name root
+
+
+object 2
+parent 1
+name test
+
+method run
+  using send
+
+  for method_name in send @list_methods
+    if method_name.startsWith 'test_'
+      try
+        result = send @[method_name]
+      catch e
+        result = e
+
+      [method_name, result]
+
+
+default_parent $test
+
+object $test_testing
+
+method test_testing
+  true
+

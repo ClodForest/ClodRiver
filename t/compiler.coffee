@@ -245,7 +245,7 @@ describe 'Compiler', ->
     it 'works with using and args together', ->
       source = '''
         method add_to_total
-          using toint, cthis
+          using toint
           args amount
           vars total
 

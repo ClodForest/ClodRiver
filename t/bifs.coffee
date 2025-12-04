@@ -9,7 +9,7 @@ test 'BIF: create', ->
 
   core.addMethod $root, 'test_create', (create) ->
     (ctx, args) ->
-      obj = create ctx.cthis()
+      obj = create this
       obj
 
   result = core.call $root, 'test_create'
@@ -120,7 +120,7 @@ test 'BIF: children', ->
 
   core.addMethod $root, 'test_children', (children) ->
     (ctx, args) ->
-      children ctx.cthis()
+      children this
 
   result = core.call $root, 'test_children'
   assert.ok Array.isArray result
@@ -157,6 +157,27 @@ test 'BIF: lookup_method', ->
   # Method not found
   result = core.call $root, 'test_lookup', [child, 'nonexistent']
   assert.strictEqual result, null
+
+test 'BIF: list_methods', ->
+  core = new Core()
+  $root = core.toobj '$root'
+  parent = core.create $root
+  child = core.create parent
+
+  core.addMethod parent, 'parent_method', -> (ctx, args) -> 'from parent'
+  core.addMethod child, 'child_method1', -> (ctx, args) -> 'from child 1'
+  core.addMethod child, 'child_method2', -> (ctx, args) -> 'from child 2'
+
+  core.addMethod child, 'test_list_methods', (list_methods) ->
+    (ctx, args) ->
+      list_methods()
+
+  result = core.call child, 'test_list_methods'
+  assert.ok Array.isArray result
+  assert.ok result.includes 'child_method1'
+  assert.ok result.includes 'child_method2'
+  assert.ok result.includes 'test_list_methods'
+  assert.ok not result.includes 'parent_method'  # inherited, not own
 
 test 'BIF: compile', ->
   core = new Core()
@@ -317,18 +338,18 @@ test 'BIF integration: eval_on pattern from core.clod', ->
       [code] = args
 
       fn = compile code
-      fn.definer = ctx.cthis()
+      fn.definer = this
 
       # Find temp name
       prefix = "eval_temp_"
       fnNumber = 0
-      fnNumber++ while typeof ctx.cthis()[name = prefix + fnNumber] is 'function'
+      fnNumber++ while typeof this[name = prefix + fnNumber] is 'function'
 
       try
-        add_method ctx.cthis(), name, fn
-        result = ctx.send ctx.cthis(), name
+        add_method this, name, fn
+        result = ctx.send this, name
       finally
-        rm_method ctx.cthis(), name
+        rm_method this, name
 
       result
 

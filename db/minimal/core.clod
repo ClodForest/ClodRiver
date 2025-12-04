@@ -38,13 +38,13 @@ method del_obj_name
   del_obj_name name
 
 method startup
-  using send, $connection, cthis
+  using send, $connection
   args p = 7777, a = 'localhost'
   vars port, addr
 
   port = p
   addr = a
-  send cthis().spawn_listener, $connection, {port, addr}
+  send @spawn_listener, $connection, {port, addr}
 
 method spawn_listener
   using listen, send
@@ -62,23 +62,23 @@ object 1
 name root
 
 method eval_on
-  using $sys, send, compile, cthis
-  args code, definer = cthis
+  using $sys, send, compile
+  args code, definer = @
 
   fn = compile code
   fn.definer = definer
 
   prefix = "eval_temp_"
   fnNumber = 0
-  fnNumber++ while 'function' is typeof cthis()[name = prefix + fnNumber]
+  fnNumber++ while 'function' is typeof @[name = prefix + fnNumber]
   fn.name = name
 
   try
-    send $sys.add_methods, cthis(), {[name]: fn}
-    result = send cthis()[name]
+    send $sys.add_methods, @, {[name]: fn}
+    result = send @[name]
 
   finally
-    send $sys.rm_method, cthis(), fn
+    send $sys.rm_method, @, fn
 
   return result
 
@@ -103,19 +103,19 @@ method lookup_method
 
 method init
   disallow overrides
-  using toint, send, sender, cthis
+  using toint, send, sender
 
-  if sender() isnt cthis()
+  if sender() isnt @
     throw "perm"
 
   errors = {}
 
-  for p in cthis().parents().reverse()
+  for p in @parents().reverse()
     try
       methodName = "init_#{send p.root_name}"
 
       if (found = p[methodName]) and found.definer is p
-        send cthis()[methodName]
+        send @[methodName]
 
     catch e
       errors[toint p] = e
@@ -124,12 +124,12 @@ method init
 
 method spawn
   disallow overrides
-  using $sys, send, cthis
+  using $sys, send
 
-  send $sys.create, cthis()
+  send $sys.create, @
 
 method root_name
-  using send, $sys, toint, cthis
+  using send, $sys, toint
   args newName
   vars name
 
@@ -137,25 +137,52 @@ method root_name
     try
       send $sys.del_obj_name, name
 
-    send $sys.add_obj_name, newName, cthis()
+    send $sys.add_obj_name, newName, @
     name = newName
   else
     if name
       return name
 
-    '#' + toint(cthis())
+    '#' + toint(@)
+
+method list_methods
+  using list_methods
+
+  list_methods()
+
+method request_methods
+  using toobj, core_toobj, add_method, list_methods
+  args requests
+
+  for objName, patterns of requests
+    parentObj = toobj '$' + objName
+    childObj = core_toobj @, '$' + objName
+
+    continue unless parentObj? and childObj?
+
+    for methodName in list_methods parentObj
+      for pattern in patterns
+        if pattern instanceof RegExp
+          matches = pattern.test methodName
+        else
+          matches = methodName is pattern
+
+        if matches
+          method = parentObj[methodName]
+          add_method childObj, methodName, method.fn, method.source, {disallowOverrides: method.disallowOverrides}
+          break
 
 
 object $connection
 
 method spawn
-  using $sys, send, cthis
+  using $sys, send
 
-  result = send $sys.create, cthis()
+  result = send $sys.create, @
   return result
 
 method connected
-  using send, accept, $connection, $admin, cthis
+  using send, accept, $connection, $admin
   args socketInfo
 
   if socketInfo
@@ -164,7 +191,7 @@ method connected
     accept connection
   else
     # Called as client connection - tell $admin about us
-    send $admin.set_connection, cthis()
+    send $admin.set_connection, @
 
 method received
   using emit, send, $admin
@@ -205,11 +232,11 @@ method set_connection
   connection = conn
 
 method receive_line
-  using send, clod_eval, tostr, cthis
+  using send, clod_eval, tostr
   args s
 
   result = clod_eval s
-  send cthis().notify, "=> #{tostr result}"
+  send @notify, "=> #{tostr result}"
 
 method notify
   using send

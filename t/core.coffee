@@ -180,16 +180,14 @@ describe 'Core', ->
       core = new Core()
       obj  = core.create()
 
-      core.addMethod obj, 'test', (cthis, definer, caller, sender) ->
+      core.addMethod obj, 'test', (definer, caller, sender) ->
         (ctx, args) ->
-          cthis:   cthis()
           definer: definer()
           caller:  caller()
           sender:  sender()
 
       result = core.call obj, 'test', []
 
-      assert.strictEqual result.cthis,   obj
       assert.strictEqual result.definer, obj
       assert.strictEqual result.caller,  null
       assert.strictEqual result.sender,  null

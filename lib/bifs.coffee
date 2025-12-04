@@ -12,8 +12,8 @@ class BIFs
   create: (parent) =>
     @core.create parent
 
-  add_method: (obj, name, fn) =>
-    @core.addMethod obj, name, fn
+  add_method: (obj, name, fn, source = null, flags = {}) =>
+    @core.addMethod obj, name, fn, source, flags
 
   add_obj_name: (name, obj) =>
     @core.add_obj_name name, obj
@@ -52,6 +52,13 @@ class BIFs
       current = Object.getPrototypeOf current
     null
 
+  list_methods: (ctx, obj = null) =>
+    target = obj ? ctx.obj
+    result = []
+    for name of target when target.hasOwnProperty(name) and target[name] instanceof CoreMethod
+      result.push name
+    result
+
   # Compilation
   compile: (code) =>
     jsCode = CoffeeScript.compile code, {bare: true}
@@ -89,7 +96,7 @@ class BIFs
   listen: (ctx, listener, options) =>
     # Enforce $sys-only
     $sys = @core.toobj '$sys'
-    if ctx.cthis() isnt $sys
+    if ctx.obj isnt $sys
       throw new Error "listen() can only be called on $sys"
 
     net = require 'node:net'
@@ -114,7 +121,7 @@ class BIFs
     listener
 
   accept: (ctx, connection) =>
-    listener = ctx.cthis()
+    listener = ctx.obj
 
     # Check if caller has a pending socket (is a listener)
     unless listener._pendingSocket?
@@ -142,7 +149,7 @@ class BIFs
     connection
 
   emit: (ctx, data) =>
-    connection = ctx.cthis()
+    connection = ctx.obj
 
     # Check if caller has an associated socket
     unless connection._socket?
@@ -180,7 +187,7 @@ class BIFs
     [
       'create', 'add_method', 'add_obj_name', 'del_obj_name', 'rm_method',
       'toint', 'tostr',
-      'children', 'lookup_method',
+      'children', 'lookup_method', 'list_methods',
       'compile', 'clod_eval',
       'textdump',
       'listen', 'accept', 'emit',

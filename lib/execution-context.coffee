@@ -19,7 +19,6 @@ class ExecutionContext
     Object.assign @obj._state[@_definer._id], data
     @obj
 
-  cthis:   => @obj
   definer: => @_definer
   caller:  => @parent?.obj or null
   sender:  => @parent?._definer or null

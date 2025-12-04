@@ -1,6 +1,13 @@
 object $vr
 default_root $vr
 
+object $described
+
+method description
+  vars description
+
+  description or "You seen nothing special."
+
 object $container
 
 method init_container
