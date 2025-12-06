@@ -305,6 +305,52 @@ describe 'Core', ->
         NoParentMethodError
       )
 
+  describe '_dispatch', ->
+    it 'dispatches to CoreObject via ClodMUD path', ->
+      core = new Core()
+      obj  = core.create()
+
+      core.addMethod obj, 'greet', ->
+        (ctx, args) ->
+          "Hello, #{args[0]}!"
+
+      core.addMethod obj, 'caller', (send) ->
+        (ctx, args) ->
+          send obj, 'greet', 'World'
+
+      result = core.call obj, 'caller', []
+
+      assert.strictEqual result, 'Hello, World!'
+
+    it 'dispatches to plain JS object directly', ->
+      core = new Core()
+      obj  = core.create()
+
+      core.addMethod obj, 'test_js', (send) ->
+        (ctx, args) ->
+          jsObj = {
+            greet: (name) -> "Hi, #{name}!"
+          }
+          send jsObj, 'greet', 'JS'
+
+      result = core.call obj, 'test_js', []
+
+      assert.strictEqual result, 'Hi, JS!'
+
+    it 'throws for missing method on JS object', ->
+      core = new Core()
+      obj  = core.create()
+
+      core.addMethod obj, 'test_missing', (send) ->
+        (ctx, args) ->
+          jsObj = {}
+          send jsObj, 'missing', 'arg'
+
+      assert.throws(
+        -> core.call obj, 'test_missing', []
+        /No method missing on JS object/
+      )
+
   return
   describe 'complex inheritance chain', ->
     it 'walks full prototype chain', ->

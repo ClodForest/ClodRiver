@@ -3,6 +3,7 @@
 
 CoffeeScript = require 'coffeescript'
 CoreMethod   = require './core-method'
+CoreObject   = require './core-object'
 TextDump     = require './text-dump'
 
 class BIFs
@@ -68,9 +69,73 @@ class BIFs
     -> innerFn
 
   clod_eval: (code) =>
-    jsCode = CoffeeScript.compile code, {bare: true}
-    # Use eval directly to execute and return the result
+    Compiler = require './compiler'
+
+    # Transform $name and #id references to toobj() calls
+    # Skip matches inside strings by checking preceding context
+    transformed = code
+
+    # Transform $name (but not inside strings)
+    transformed = @_transformOutsideStrings transformed, /\$(\w+)/g, (match, name) ->
+      "toobj('$#{name}')"
+
+    # Transform #id (but not inside strings)
+    transformed = @_transformOutsideStrings transformed, /#(\d+)/g, (match, id) ->
+      "toobj('##{id}')"
+
+    # Transform method calls to _dispatch
+    transformed = Compiler._transformMethodCalls transformed
+
+    jsCode = CoffeeScript.compile transformed, {bare: true}
+
+    # Provide toobj and _dispatch in the eval context
+    toobj = (ref) => @core.toobj ref
+    _dispatch = (target, methodName, args...) =>
+      if target instanceof CoreObject
+        @core.call target, methodName, args
+      else
+        fn = target[methodName]
+        throw new Error "No method #{methodName} on JS object" unless typeof fn is 'function'
+        fn.apply target, args
     eval(jsCode)
+
+  _transformOutsideStrings: (code, pattern, replacer) ->
+    # Simple string-aware transformation
+    # Track whether we're inside a string
+    result = ''
+    i = 0
+    inString = null  # null, '"', or "'"
+
+    # Remove 'g' flag for single match (to get match.index)
+    singlePattern = new RegExp(pattern.source)
+
+    while i < code.length
+      char = code[i]
+
+      # Handle string boundaries
+      if not inString and char in ['"', "'"]
+        inString = char
+        result += char
+        i++
+      else if inString and char is inString and code[i-1] isnt '\\'
+        inString = null
+        result += char
+        i++
+      else if inString
+        result += char
+        i++
+      else
+        # Not in string - try to match pattern
+        rest = code.substring i
+        match = rest.match singlePattern
+        if match and match.index is 0
+          result += replacer match[0], match[1]
+          i += match[0].length
+        else
+          result += char
+          i++
+
+    result
 
   # Persistence
   textdump: (ctx, relativePath) =>
@@ -157,6 +222,44 @@ class BIFs
 
     connection._socket.write data
 
+  emit_error: (ctx, data) =>
+    connection = ctx.obj
+
+    # Check if caller has stderr (stdio connection)
+    unless connection._stderr?
+      throw new Error "emit_error() called on non-stdio connection"
+
+    connection._stderr.write data
+
+  attach_stdio: (ctx, connection) =>
+    $sys = @core.toobj '$sys'
+    if ctx.obj isnt $sys
+      throw new Error "attach_stdio() can only be called on $sys"
+
+    connection._socket = process.stdout
+    connection._stderr = process.stderr
+
+    process.stdin.setEncoding 'utf8'
+    process.stdin.on 'data', (data) =>
+      @core.callIfExists connection, 'received', [Buffer.from(data)]
+
+    process.stdin.on 'close', =>
+      @core.callIfExists connection, 'disconnected'
+
+    process.stdin.resume()
+
+    @core.callIfExists connection, 'connected'
+
+    connection
+
+  # Node.js access ($sys only)
+  require: (ctx, moduleName) =>
+    $sys = @core.toobj '$sys'
+    if ctx.obj isnt $sys
+      throw new Error "require() can only be called on $sys"
+
+    require moduleName
+
   # Core loading
   load_core: (ctx, path, holder) =>
     fs   = require 'node:fs'
@@ -190,8 +293,8 @@ class BIFs
       'children', 'lookup_method', 'list_methods',
       'compile', 'clod_eval',
       'textdump',
-      'listen', 'accept', 'emit',
-      'load_core', 'core_toobj', 'core_call', 'core_destroy'
+      'listen', 'accept', 'emit', 'emit_error', 'attach_stdio',
+      'require', 'load_core', 'core_toobj', 'core_call', 'core_destroy'
     ]
 
 module.exports = BIFs

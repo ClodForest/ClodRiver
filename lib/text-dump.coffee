@@ -1,12 +1,16 @@
+vm               = require 'vm'
 CoreMethod       = require './core-method'
 ExecutionContext = require './execution-context'
+Compiler         = require './compiler'
+sourceMaps       = require './source-maps'
 
 class TextDump
   constructor: ->
     @objects = {}
 
-  @fromString: (source) ->
+  @fromString: (source, filename = 'unknown.clod') ->
     dump = new TextDump()
+    dump.sourceFile = filename
     dump._parse source
     dump
 
@@ -237,8 +241,17 @@ class TextDump
           source = @_generateMethodSource methodDef
 
         try
-          jsCode = CoffeeScript.compile source, {bare: true}
-          fn = eval jsCode
+          result = CoffeeScript.compile source, {bare: true, sourceMap: true}
+          objName = objDef.name or "##{id}"
+          clodLine = methodDef.lineNum or 0
+          sourceFile = @sourceFile or 'unknown.clod'
+          scriptFilename = "$#{objName}.#{methodName} (#{sourceFile}:#{clodLine})"
+          sourceMap = JSON.parse result.v3SourceMap
+          sourceMap.sources = [scriptFilename]
+          sourceMap.sourcesContent = [source]
+          sourceMaps.register scriptFilename, JSON.stringify sourceMap
+          script = new vm.Script result.js, {filename: scriptFilename}
+          fn = script.runInThisContext()
         catch error
           console.error "Failed to compile method #{id}.#{methodName}:", error.message
           continue
@@ -263,8 +276,17 @@ class TextDump
           source = @_generateDataSource objDef.data, objRefs
           try
             CoffeeScript = require 'coffeescript'
-            jsCode = CoffeeScript.compile source, {bare: true}
-            fn = eval jsCode
+            result = CoffeeScript.compile source, {bare: true, sourceMap: true}
+            objName = objDef.name or "##{id}"
+            dataLine = objDef.data.lineNum or 0
+            sourceFile = @sourceFile or 'unknown.clod'
+            scriptFilename = "$#{objName}._data (#{sourceFile}:#{dataLine})"
+            sourceMap = JSON.parse result.v3SourceMap
+            sourceMap.sources = [scriptFilename]
+            sourceMap.sourcesContent = [source]
+            sourceMaps.register scriptFilename, JSON.stringify sourceMap
+            script = new vm.Script result.js, {filename: scriptFilename}
+            fn = script.runInThisContext()
 
             dummyMethod = {definer: obj, name: '_data_loader'}
             ctx = new ExecutionContext core, obj, dummyMethod
@@ -346,11 +368,9 @@ class TextDump
     lines = []
     hasVars = methodDef.vars?.length > 0
 
-    if methodDef.using?.length > 0
-      imports = methodDef.using.join ', '
-      lines.push "(#{imports}) ->"
-    else
-      lines.push "() ->"
+    # v2 mode: auto-add _dispatch to imports
+    imports = ['_dispatch', (methodDef.using or [])...].join ', '
+    lines.push "(#{imports}) ->"
 
     lines.push "  (ctx, args) ->"
 
@@ -381,7 +401,9 @@ class TextDump
         lines.push ''
       else
         stripped = bodyLine.substring minIndent
-        lines.push "#{bodyIndent}#{stripped}"
+        # v2 mode: transform method calls to _dispatch
+        transformed = Compiler._transformMethodCalls stripped
+        lines.push "#{bodyIndent}#{transformed}"
 
     # Save vars to state in finally block
     if hasVars

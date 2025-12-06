@@ -7,14 +7,14 @@ parent 1
 name sys
 
 method create
-  using create, $root, send, add_obj_name
+  using create, $root, add_obj_name
   args parent = $root, name
 
   newObj = create parent
 
   if typeof name is 'string' and name isnt ''
     add_obj_name name, newObj
-    send newObj.root_name, name
+    newObj.root_name(name)
 
   newObj
 
@@ -38,31 +38,37 @@ method del_obj_name
   del_obj_name name
 
 method startup
-  using send, $connection
-  args p = 7777, a = 'localhost'
+  using require, $connection
+  args options = {}
   vars port, addr
 
-  port = p
-  addr = a
-  send @spawn_listener, $connection, {port, addr}
+  process = require 'node:process'
+  {port = 7777, addr = 'localhost'} = options
+  @spawn_listener($connection, {port, addr})
 
 method spawn_listener
-  using listen, send
+  using listen
   args connection_class, options
   vars port, addr
 
   if options
     {port = 7777, addr = 'localhost'} = options
 
-  newListener = send connection_class.spawn
+  newListener = connection_class.spawn()
   listen newListener, {port, addr}
 
+method shutdown
+  using require
+
+  (require 'node:process').exit()
 
 object 1
 name root
 
+default_parent $root
+
 method eval_on
-  using $sys, send, compile
+  using $sys, compile
   args code, definer = @
 
   fn = compile code
@@ -74,11 +80,11 @@ method eval_on
   fn.name = name
 
   try
-    send $sys.add_methods, @, {[name]: fn}
-    result = send @[name]
+    $sys.add_methods(@, {[name]: fn})
+    result = @[name]()
 
   finally
-    send $sys.rm_method, @, fn
+    $sys.rm_method(@, fn)
 
   return result
 
@@ -90,9 +96,9 @@ method children
 
 
 method descendents
-  using children, send
+  using children
 
-  children().concat (children().map (child) -> send child.descendents)...
+  children().concat (children().map (child) -> child.descendents())...
 
 method lookup_method
   disallow overrides
@@ -103,7 +109,7 @@ method lookup_method
 
 method init
   disallow overrides
-  using toint, send, sender
+  using toint, sender
 
   if sender() isnt @
     throw "perm"
@@ -112,10 +118,10 @@ method init
 
   for p in @parents().reverse()
     try
-      methodName = "init_#{send p.root_name}"
+      methodName = "init_#{p.root_name()}"
 
       if (found = p[methodName]) and found.definer is p
-        send @[methodName]
+        @[methodName]()
 
     catch e
       errors[toint p] = e
@@ -124,20 +130,20 @@ method init
 
 method spawn
   disallow overrides
-  using $sys, send
+  using $sys
 
-  send $sys.create, @
+  $sys.create(@)
 
 method root_name
-  using send, $sys, toint
+  using $sys, toint
   args newName
   vars name
 
   if newName
     try
-      send $sys.del_obj_name, name
+      $sys.del_obj_name(name)
 
-    send $sys.add_obj_name, newName, @
+    $sys.add_obj_name(newName, @)
     name = newName
   else
     if name
@@ -176,25 +182,26 @@ method request_methods
 object $connection
 
 method spawn
-  using $sys, send
+  using $sys
 
-  result = send $sys.create, @
+  # This method is redundant. The one on $root does the same thing.
+  result = $sys.create(@)
   return result
 
 method connected
-  using send, accept, $connection, $admin
+  using accept, $connection, $admin
   args socketInfo
 
   if socketInfo
     # Called as listener - spawn new connection and accept it
-    connection = send $connection.spawn
+    connection = $connection.spawn()
     accept connection
   else
     # Called as client connection - tell $admin about us
-    send $admin.set_connection, @
+    $admin.set_connection(@)
 
 method received
-  using emit, send, $admin
+  using emit, $admin
   args incomingBuf
   vars buf
 
@@ -206,7 +213,8 @@ method received
 
   try
     for line in lines[...-1]
-      send $admin.receive_line, line
+      console.log {admin: $admin, receive_line: $admin.receive_line}
+      $admin.receive_line(line)
 
   catch e
     emit e.toString()
@@ -232,15 +240,53 @@ method set_connection
   connection = conn
 
 method receive_line
-  using send, clod_eval, tostr
+  using clod_eval, tostr
+  vars connection
   args s
 
-  result = clod_eval s
-  send @notify, "=> #{tostr result}"
+  if 'notify' not in @list_methods()
+    throw new Error "No .notify method?"
+
+  s.replace /^\s*/, ''
+
+  switch s[0]
+    when undefined then result = "Yeah, I'm here."
+    when ';'       then result = @cmd_eval s[1..]
+    when '@'       then result = @do_cmd   s[1..]
+
+    else
+      result = "huh?"
+
+  @notify result + "\n\n"
+
+method do_cmd
+  args s
+
+  for command in @list_commands()
+    if s.startsWith "cmd_" + command
+      return @[command] s
+
+  return "I don't know what that means."
+
+method cmd_eval
+  using clod_eval
+  args s
+
+  try
+    "=> " + clod_eval s
+  catch e
+    e.toString()
+
+method list_commands
+  @list_methods()
+    .filter (methodName) -> methodName.startsWith 'cmd_'
+    .map    (methodName) -> methodName[4..]
+
+method cmd_shutdown
+  $sys.shutdown()
 
 method notify
-  using send
   args s
   vars connection
 
-  send connection.emit, s
+  connection.emit(s)

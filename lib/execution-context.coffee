@@ -1,4 +1,5 @@
 CoreMethod = require './core-method'
+CoreObject = require './core-object'
 {
   InvalidMethodError
   InvalidObjectError
@@ -23,15 +24,26 @@ class ExecutionContext
   caller:  => @parent?.obj or null
   sender:  => @parent?._definer or null
 
-  send: (target, methodName, args...) =>
-    throw new InvalidObjectError("Cannot send to null target") unless target?
+  _dispatch: (target, methodName, args...) =>
+    throw new InvalidObjectError("Cannot dispatch to null target") unless target?
     throw new InvalidMethodError("Method name must be a string") unless typeof methodName is 'string'
 
-    method = @core._findMethod target, methodName
-    throw new MethodNotFoundError(target._id, methodName) unless method?
+    if target instanceof CoreObject
+      # ClodMUD dispatch
+      method = @core._findMethod target, methodName
+      throw new MethodNotFoundError(target._id, methodName) unless method?
 
-    childCtx = new ExecutionContext @core, target, method, this
-    method.invoke @core, target, childCtx, args
+      childCtx = new ExecutionContext @core, target, method, this
+      method.invoke @core, target, childCtx, args
+    else
+      # Direct JS call
+      fn = target[methodName]
+      throw new Error "No method #{methodName} on JS object" unless typeof fn is 'function'
+      fn.apply target, args
+
+  # Alias for backwards compatibility
+  send: (target, methodName, args...) =>
+    @_dispatch target, methodName, args...
 
   pass: (args...) =>
     throw new Error("ExecutionContext has no definer") if not @_definer

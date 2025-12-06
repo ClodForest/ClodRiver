@@ -268,3 +268,87 @@ describe 'Compiler', ->
       assert.strictEqual output, 15
 
       assert.strictEqual obj._state[obj._id].total, 15
+
+  describe 'v2 mode', ->
+    it 'transforms method calls to _dispatch', ->
+      source = '''
+        method test
+          args x
+
+          x.foo(1, 2)
+      '''
+
+      result = Compiler.compileMethod source, {returnMetadata: true, v2: true}
+
+      core = new Core()
+      obj = core.create()
+
+      # Create a test object with foo method
+      testObj = {
+        foo: (a, b) -> a + b
+      }
+
+      core.addMethod obj, result.name, result.fn, source
+
+      output = core.call obj, 'test', [testObj]
+      assert.strictEqual output, 3
+
+    it 'transforms @method calls', ->
+      source = '''
+        method test
+
+          @helper()
+      '''
+
+      result = Compiler.compileMethod source, {returnMetadata: true, v2: true}
+
+      core = new Core()
+      obj = core.create()
+
+      core.addMethod obj, 'helper', -> (ctx, args) -> 'helped!'
+      core.addMethod obj, result.name, result.fn, source
+
+      output = core.call obj, 'test', []
+      assert.strictEqual output, 'helped!'
+
+    it 'auto-adds _dispatch to imports', ->
+      source = '''
+        method test
+          using $root
+
+          $root.children()
+      '''
+
+      result = Compiler.compileMethod source, {returnMetadata: true, v2: true}
+
+      # The function should have _dispatch as first import
+      fnStr = result.fn.toString()
+      assert.ok fnStr.includes('_dispatch')
+
+    it 'works with chained calls', ->
+      source = '''
+        method test
+          args x
+
+          x.first().second()
+      '''
+
+      result = Compiler.compileMethod source, {returnMetadata: true, v2: true}
+
+      core = new Core()
+      obj = core.create()
+
+      chainObj = {
+        first: -> {second: -> 'chained!'}
+      }
+
+      core.addMethod obj, result.name, result.fn, source
+
+      output = core.call obj, 'test', [chainObj]
+      assert.strictEqual output, 'chained!'
+
+    it 'does not transform property access without call', ->
+      line = "  x = foo.bar"
+      transformed = Compiler._transformMethodCalls line
+      assert.strictEqual transformed, line
+

@@ -40,8 +40,8 @@ class CoreMethod
   _resolveImports: (core, ctx) ->
     # BIFs that require ctx as first argument
     ctxBifs = [
-      'textdump', 'listen', 'accept', 'emit',
-      'load_core', 'core_toobj', 'core_call', 'core_destroy',
+      'textdump', 'listen', 'accept', 'emit', 'emit_error', 'attach_stdio',
+      'require', 'load_core', 'core_toobj', 'core_call', 'core_destroy',
       'list_methods'
     ]
 
