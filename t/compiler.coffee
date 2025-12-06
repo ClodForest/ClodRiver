@@ -348,7 +348,12 @@ describe 'Compiler', ->
       assert.strictEqual output, 'chained!'
 
     it 'does not transform property access without call', ->
-      line = "  x = foo.bar"
-      transformed = Compiler._transformMethodCalls line
+      ClodLang = require '../lib/clod-lang'
+      CoffeeScript = require 'coffeescript'
+      line = "x = foo.bar"
+      ast = CoffeeScript.nodes line
+      transforms = []
+      ClodLang._collectTransforms ast, transforms
+      transformed = ClodLang._applyTransforms line, transforms
       assert.strictEqual transformed, line
 

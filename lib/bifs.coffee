@@ -29,6 +29,9 @@ class BIFs
   toint: (obj) =>
     obj?._id ? null
 
+  toobj: (ref) =>
+    @core.toobj ref
+
   tostr: (value) =>
     return String(value) unless value?._id?
     "##{value._id}"
@@ -54,7 +57,11 @@ class BIFs
     null
 
   list_methods: (ctx, obj = null) =>
-    target = obj ? ctx.obj
+    # Handle direct call with CoreObject (e.g., from clod_eval)
+    if ctx instanceof CoreObject
+      target = ctx
+    else
+      target = obj ? ctx.obj
     result = []
     for name of target when target.hasOwnProperty(name) and target[name] instanceof CoreMethod
       result.push name
@@ -69,73 +76,34 @@ class BIFs
     -> innerFn
 
   clod_eval: (code) =>
-    Compiler = require './compiler'
+    ClodLang = require './clod-lang'
 
-    # Transform $name and #id references to toobj() calls
-    # Skip matches inside strings by checking preceding context
-    transformed = code
+    # Use ClodLang to transform and compile
+    # Note: ~id syntax replaces #id to avoid CoffeeScript comment conflict
+    jsCode = ClodLang.compile code
 
-    # Transform $name (but not inside strings)
-    transformed = @_transformOutsideStrings transformed, /\$(\w+)/g, (match, name) ->
-      "toobj('$#{name}')"
-
-    # Transform #id (but not inside strings)
-    transformed = @_transformOutsideStrings transformed, /#(\d+)/g, (match, id) ->
-      "toobj('##{id}')"
-
-    # Transform method calls to _dispatch
-    transformed = Compiler._transformMethodCalls transformed
-
-    jsCode = CoffeeScript.compile transformed, {bare: true}
-
-    # Provide toobj and _dispatch in the eval context
-    toobj = (ref) => @core.toobj ref
-    _dispatch = (target, methodName, args...) =>
-      if target instanceof CoreObject
-        @core.call target, methodName, args
-      else
-        fn = target[methodName]
-        throw new Error "No method #{methodName} on JS object" unless typeof fn is 'function'
-        fn.apply target, args
-    eval(jsCode)
-
-  _transformOutsideStrings: (code, pattern, replacer) ->
-    # Simple string-aware transformation
-    # Track whether we're inside a string
-    result = ''
-    i = 0
-    inString = null  # null, '"', or "'"
-
-    # Remove 'g' flag for single match (to get match.index)
-    singlePattern = new RegExp(pattern.source)
-
-    while i < code.length
-      char = code[i]
-
-      # Handle string boundaries
-      if not inString and char in ['"', "'"]
-        inString = char
-        result += char
-        i++
-      else if inString and char is inString and code[i-1] isnt '\\'
-        inString = null
-        result += char
-        i++
-      else if inString
-        result += char
-        i++
-      else
-        # Not in string - try to match pattern
-        rest = code.substring i
-        match = rest.match singlePattern
-        if match and match.index is 0
-          result += replacer match[0], match[1]
-          i += match[0].length
+    # Build list of imports and their values
+    imports = ['toobj', '_dispatch']
+    values = [
+      ((ref) => @core.toobj ref),
+      ((target, methodName, args...) =>
+        if target instanceof CoreObject
+          @core.call target, methodName, args
         else
-          result += char
-          i++
+          fn = target[methodName]
+          throw new Error "No method #{methodName} on JS object" unless typeof fn is 'function'
+          fn.apply target, args)
+    ]
 
-    result
+    # Auto-import BIFs that are used in the code
+    for bifName in BIFs.bifNames()
+      if (new RegExp("\\b#{bifName}\\b")).test jsCode
+        imports.push bifName
+        values.push @[bifName]
+
+    # Create a wrapper function with imports as parameters
+    wrapper = eval "(function(#{imports.join ', '}) { return #{jsCode}; })"
+    wrapper.apply null, values
 
   # Persistence
   textdump: (ctx, relativePath) =>

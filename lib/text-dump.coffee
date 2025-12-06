@@ -1,7 +1,9 @@
 vm               = require 'vm'
+CoffeeScript     = require 'coffeescript'
 CoreMethod       = require './core-method'
 ExecutionContext = require './execution-context'
 Compiler         = require './compiler'
+ClodLang         = require './clod-lang'
 sourceMaps       = require './source-maps'
 
 class TextDump
@@ -216,11 +218,14 @@ class TextDump
 
     sortedIds = Object.keys(@objects).map((id) -> parseInt id).sort (a, b) -> a - b
 
-    # First pass: create all objects without parents
+    # First pass: create all objects without parents (reuse existing named objects)
     for id in sortedIds
       objDef = @objects[id]
-      newObj = core.create null, objDef.name
-      objRefs[id] = newObj
+      if objDef.name? and (existing = core.toobj "$#{objDef.name}")?
+        objRefs[id] = existing
+      else
+        newObj = core.create null, objDef.name
+        objRefs[id] = newObj
 
     # Second pass: set up parent relationships (handles forward references)
     for id in sortedIds
@@ -368,8 +373,12 @@ class TextDump
     lines = []
     hasVars = methodDef.vars?.length > 0
 
-    # v2 mode: auto-add _dispatch to imports
-    imports = ['_dispatch', (methodDef.using or [])...].join ', '
+    # v2 mode: auto-add _dispatch and toobj to imports (deduplicated)
+    userImports = methodDef.using or []
+    allImports = ['_dispatch', 'toobj']
+    for imp in userImports
+      allImports.push imp unless imp in allImports
+    imports = allImports.join ', '
     lines.push "(#{imports}) ->"
 
     lines.push "  (ctx, args) ->"
@@ -396,14 +405,18 @@ class TextDump
 
     minIndent = 0 if minIndent is Infinity
 
-    for bodyLine in (methodDef.body or [])
+    # Transform body using ClodLang
+    bodyLines = methodDef.body or []
+    bodySource = bodyLines.join '\n'
+    transformedBody = @_transformWithClodLang bodySource
+    transformedLines = transformedBody.split '\n'
+
+    for bodyLine in transformedLines
       if bodyLine.trim() is ''
         lines.push ''
       else
         stripped = bodyLine.substring minIndent
-        # v2 mode: transform method calls to _dispatch
-        transformed = Compiler._transformMethodCalls stripped
-        lines.push "#{bodyIndent}#{transformed}"
+        lines.push "#{bodyIndent}#{stripped}"
 
     # Save vars to state in finally block
     if hasVars
@@ -412,6 +425,17 @@ class TextDump
       lines.push "      Object.assign @_state[ctx._definer._id], {#{varsList}}"
 
     lines.join '\n'
+
+  _transformWithClodLang: (code) ->
+    preprocessed = ClodLang._preprocessObjectRefs code
+    try
+      ast = CoffeeScript.nodes preprocessed
+      transforms = []
+      ClodLang._collectTransforms ast, transforms
+      ClodLang._applyTransforms preprocessed, transforms
+    catch e
+      # If transformation fails, return original code
+      code
 
   _generateDataSource: (dataDef, objRefs = {}) ->
     lines = []

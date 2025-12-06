@@ -6,6 +6,21 @@ object 0
 parent 1
 name sys
 
+method textdump
+  using textdump
+  args relativePath
+
+  #textdump relativePath
+
+method require
+  using sender
+  args module
+
+  #if sender() not in [$data]
+  #  throw new Error "Sender not authorized to use require"
+
+  #require module
+
 method create
   using create, $root, add_obj_name
   args parent = $root, name
@@ -244,9 +259,6 @@ method receive_line
   vars connection
   args s
 
-  if 'notify' not in @list_methods()
-    throw new Error "No .notify method?"
-
   s.replace /^\s*/, ''
 
   switch s[0]
@@ -290,3 +302,65 @@ method notify
   vars connection
 
   connection.emit(s)
+
+object $data
+
+method init_data
+  vars CoreObject, CoreFunction
+
+  CoreObject   = $sys.require './lib/core-object'
+  CoreFunction = $sys.require './lib/core-function'
+
+method to_string
+  args value
+
+  switch typeof value
+    when 'boolean', 'number', 'string',  'undefined', 'bigint',  'symbol'     then value.toString()
+    when 'object'                then @object_to_string value
+    when 'function'              then @function_to_string value
+    else
+      "didn't recognize type of #{value}"
+
+method object_to_string
+  vars CoreObject, CoreFunction
+  args obj
+
+  if obj instanceof CoreObject
+    @core_obj_to_string obj
+  else if obj instanceof CoreFunction
+    @core_fn_to_string obj
+  else
+    JSON.stringify obj # XXX: needs attention
+
+method core_obj_to_string
+  args obj
+
+  if name = obj._name
+    "$" + name
+  else
+    "#" + obj._id
+
+method core_fn_to_string
+  args fn
+
+  ( if (definer = fn.definer) instanceof CoreObject
+      @core_obj_to_string definer
+    else
+      "<unknown object>"
+  ) + ".#{fn.name}"
+
+method function_to_string
+  args fn
+
+  src = fn.toString()
+  matched = src.match ///
+    ^ function \s?
+         (?<name> [^(]* )
+      \( (?<args> [^)]* ) \)
+  ///
+  if matched
+    {name, args} = matched.groups
+    "#{name}(#{args}) { ... }"
+  else
+    src
+
