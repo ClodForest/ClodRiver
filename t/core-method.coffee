@@ -131,18 +131,23 @@ test 'CoreMethod: invoke caches import names', ->
   method.invoke core, obj, ctx, []
   assert.strictEqual method._importNames[0], 'create'
 
-test 'CoreMethod: canBeOverriddenBy respects flag', ->
+test 'CoreMethod: canBeOverridden respects flags', ->
   core = new Core()
   $root = core.toobj '$root'
-  child = core.create $root
 
   fn = -> (ctx, args) -> 42
 
-  allowMethod = new CoreMethod 'test', fn, $root, null, {disallowOverrides: false}
-  assert.strictEqual allowMethod.canBeOverriddenBy(child), true
+  # Default: not overrideable
+  defaultMethod = new CoreMethod 'test', fn, $root
+  assert.strictEqual defaultMethod.canBeOverridden(), false
 
-  disallowMethod = new CoreMethod 'test', fn, $root, null, {disallowOverrides: true}
-  assert.strictEqual disallowMethod.canBeOverriddenBy(child), false
+  # Explicitly overrideable
+  overrideableMethod = new CoreMethod 'test', fn, $root, null, {overrideable: true}
+  assert.strictEqual overrideableMethod.canBeOverridden(), true
+
+  # Overrideable but disallowed (disallow wins)
+  disallowMethod = new CoreMethod 'test', fn, $root, null, {overrideable: true, disallowOverrides: true}
+  assert.strictEqual disallowMethod.canBeOverridden(), false
 
 test 'CoreMethod: serialize with all fields', ->
   core = new Core()

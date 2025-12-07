@@ -26,6 +26,7 @@ class Compiler
         name:              metadata.name
         using:             metadata.using
         argsRaw:           metadata.argsRaw
+        overrideable:      metadata.overrideable
         disallowOverrides: metadata.disallowOverrides
         source:            source
       }
@@ -40,6 +41,7 @@ class Compiler
       argsRaw:           null
       vars:              []
       body:              []
+      overrideable:      false
       disallowOverrides: false
     }
 
@@ -69,6 +71,10 @@ class Compiler
 
         if match = trimmed.match /^vars\s+(.+)$/
           result.vars = match[1].split(/\s*,\s*/)
+          continue
+
+        if trimmed is 'overrideable'
+          result.overrideable = true
           continue
 
         if trimmed is 'disallow overrides'

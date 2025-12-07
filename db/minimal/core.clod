@@ -6,20 +6,19 @@ object 0
 parent 1
 name sys
 
-method textdump
-  using textdump
-  args relativePath
+method startup
+  using require, $connection
+  args options = {}
+  vars port, addr
 
-  #textdump relativePath
+  process = require 'node:process'
+  {port = 7777, addr = 'localhost'} = options
+  @spawn_listener($connection, {port, addr})
 
-method require
-  using sender
-  args module
+method shutdown
+  using require
 
-  #if sender() not in [$data]
-  #  throw new Error "Sender not authorized to use require"
-
-  #require module
+  (require 'node:process').exit()
 
 method create
   using create, $root, add_obj_name
@@ -33,13 +32,6 @@ method create
 
   newObj
 
-method add_methods
-  using add_method
-  args target, namesAndMethods
-
-  for name, method of namesAndMethods
-    add_method target, name, method
-
 method add_obj_name
   using add_obj_name
   args name, obj
@@ -52,14 +44,29 @@ method del_obj_name
 
   del_obj_name name
 
-method startup
-  using require, $connection
-  args options = {}
-  vars port, addr
+method add_methods
+  using add_method
+  args target, namesAndMethods
 
-  process = require 'node:process'
-  {port = 7777, addr = 'localhost'} = options
-  @spawn_listener($connection, {port, addr})
+  for name, method of namesAndMethods
+    add_method target, name, method
+
+method textdump
+  using textdump
+  args relativePath
+
+  textdump relativePath
+
+method require
+  using sender, require
+  vars BIF_permission =
+    require: [$data, $admin]
+  args module
+
+  if sender() not in BIF_permission.require
+    throw new Error "Sender not authorized to use require"
+
+  require module
 
 method spawn_listener
   using listen
@@ -71,11 +78,6 @@ method spawn_listener
 
   newListener = connection_class.spawn()
   listen newListener, {port, addr}
-
-method shutdown
-  using require
-
-  (require 'node:process').exit()
 
 object 1
 name root
@@ -171,37 +173,8 @@ method list_methods
 
   list_methods()
 
-method request_methods
-  using toobj, core_toobj, add_method, list_methods
-  args requests
-
-  for objName, patterns of requests
-    parentObj = toobj '$' + objName
-    childObj = core_toobj @, '$' + objName
-
-    continue unless parentObj? and childObj?
-
-    for methodName in list_methods parentObj
-      for pattern in patterns
-        if pattern instanceof RegExp
-          matches = pattern.test methodName
-        else
-          matches = methodName is pattern
-
-        if matches
-          method = parentObj[methodName]
-          add_method childObj, methodName, method.fn, method.source, {disallowOverrides: method.disallowOverrides}
-          break
-
 
 object $connection
-
-method spawn
-  using $sys
-
-  # This method is redundant. The one on $root does the same thing.
-  result = $sys.create(@)
-  return result
 
 method connected
   using accept, $connection, $admin
@@ -287,7 +260,7 @@ method cmd_eval
   try
     "=> " + clod_eval s
   catch e
-    e.toString()
+    e.stack
 
 method list_commands
   @list_methods()
@@ -308,8 +281,8 @@ object $data
 method init_data
   vars CoreObject, CoreFunction
 
-  CoreObject   = $sys.require './lib/core-object'
-  CoreFunction = $sys.require './lib/core-function'
+  CoreObject   = $sys.require './core-object'
+  CoreFunction = $sys.require './core-function'
 
 method to_string
   args value
@@ -364,3 +337,80 @@ method function_to_string
   else
     src
 
+object $core_manager
+
+method load_core
+  using sender, $admin, $sys
+  args relativePath
+
+  if sender() not in [$admin, $sys]
+    throw new Error "Only $admin can $admin and $sys can load child cores."
+
+  child = $child_core.spawn()
+  $sys.load_core relativePath, child
+  child
+
+object $child_core
+
+method accept_core
+  using $sys, sender
+  vars child_sys, child_root
+  
+  if sender() isnt $sys
+    throw new Error ".accept_core is $sys-only"
+
+  child_sys  = core_toobj 0
+  child_root = core_toobj 1
+
+  child_sys.loaded @
+
+method request_methods
+  vars child_sys
+  args requests
+
+  if sender isnt child_sys
+    throw new Error ".request_methods can only be called by $sys in the child core"
+
+  @check_obj_names Object.keys requests
+  @copy_methods                requests
+
+method copy_methods
+  using toobj, core_toobj, sender
+
+  if sender() isnt this
+    throw new Error ".copy_methods is child-core-only"
+
+  for objName, patterns of requests
+    parentObj = toobj '$' + objName
+    childObj  = core_toobj @, '$' + objName
+
+    continue unless parentObj? and childObj?
+
+    for methodName in list_methods parentObj
+      for pattern in patterns
+        if pattern instanceof RegExp
+          matches = pattern.test methodName
+        else
+          matches = methodName is pattern
+
+        if matches
+          method = parentObj[methodName]
+          add_method childObj, methodName, method.fn, method.source, {disallowOverrides: method.disallowOverrides}
+          break
+
+
+method check_obj_names
+  args names
+
+  unknowns = []
+
+  for corename in unknowns
+    if not obj = toobj "$" + corename
+      unknowns.push corename
+
+  if unknowns.length
+    throw new Error "The following object names are not recognized in the parent core: " + unknowns.join ", "
+      
+  return
+
+  

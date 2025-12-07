@@ -5,6 +5,7 @@ BIFs              = require './bifs'
 {
   MethodNotFoundError
   InvalidObjectError
+  OverrideNotAllowedError
 } = require './errors'
 
 class Core
@@ -67,7 +68,26 @@ class Core
     null
 
   addMethod: (obj, methodName, fn, source = null, flags = {}) ->
+    # Check for existing method in prototype chain (not on obj itself)
+    proto = Object.getPrototypeOf obj
+    while proto? and proto isnt Object.prototype
+      if proto.hasOwnProperty(methodName) and proto[methodName] instanceof CoreMethod
+        parentMethod = proto[methodName]
+        unless parentMethod.canBeOverridden()
+          definerName = @_objectName(parentMethod.definer) or "##{parentMethod.definer._id}"
+          throw new OverrideNotAllowedError obj._id, methodName, definerName
+        # Inherit overrideable flag (unless child explicitly disallows)
+        unless flags.disallowOverrides
+          flags.overrideable ?= parentMethod.overrideable
+        break
+      proto = Object.getPrototypeOf proto
+
     obj[methodName] = new CoreMethod methodName, fn, obj, source, flags
+
+  _objectName: (obj) ->
+    for name, o of @objectNames when o is obj
+      return "$#{name}"
+    null
 
   delMethod: (obj, methodName) ->
     delete obj[methodName]

@@ -22,9 +22,17 @@ class NoParentMethodError extends Error
     @objId = objId
     @methodName = methodName
 
+class OverrideNotAllowedError extends Error
+  constructor: (objId, methodName, definerName) ->
+    super "Cannot override '#{methodName}' on object ##{objId} (defined on #{definerName})"
+    @name = 'OverrideNotAllowedError'
+    @objId = objId
+    @methodName = methodName
+
 module.exports = {
   MethodNotFoundError
   InvalidMethodError
   InvalidObjectError
   NoParentMethodError
+  OverrideNotAllowedError
 }

@@ -1,6 +1,6 @@
-object 0
-parent 1
-name sys
+# vim: ft=coffee
+
+object $sys
 
 method lookup_obj_name
   using toobj
@@ -9,24 +9,34 @@ method lookup_obj_name
   toobj name
 
 method loaded
-  using $test, send
-  args module
+  using $test
+  vars parent_sys, module
+  args mod
 
-  send module.request_methods,
-    sys:  [/.*/]
-    root: [/.*/]
+  module     = mod
+  parent_sys = module.toobj '$sys'
 
-  for test in send $test.descendents
-    [send(test.root_name), send test.run]
+  @copy_parent_methods()
+  @run_tests()
+
+method copy_parent_methods
+  vars parent_sys, module
+  
+  exposed_methods =
+    module.request_methods,
+      sys:  [/.*/]
+      root: [/.*/]
+
+  for obj in ['sys', 'root']
+    for name, method of exposed_methods[obj]
+      parent_sys.add_method toobj("$" + obj), name, method
+
+method run_tests
+  for test in @descendents()
+    [test.root_name(), test.run()]
 
 
-object 1
-name root
-
-
-object 2
-parent 1
-name test
+object $test
 
 method run
   using send
@@ -39,7 +49,6 @@ method run
         result = e
 
       [method_name, result]
-
 
 default_parent $test
 

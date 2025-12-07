@@ -66,6 +66,7 @@ Methods are CoreMethod instances that encapsulate function and metadata:
 ```coffee
 class CoreMethod
   constructor: (@name, @fn, @definer, @source = null, @flags = {}) ->
+    @overrideable = @flags.overrideable ? false
     @disallowOverrides = @flags.disallowOverrides ? false
     @_importNames = null  # Cached parameter names
 
@@ -82,13 +83,15 @@ class CoreMethod
     # Call inner function with ctx and args
     innerFn.call obj, ctx, args
 
-  canBeOverriddenBy: (newDefiner) ->
-    not @disallowOverrides
+  canBeOverridden: ->
+    return false if @disallowOverrides
+    @overrideable
 
   serialize: ->
     name:              @name
     definer:           @definer._id
     source:            @source
+    overrideable:      @overrideable
     disallowOverrides: @disallowOverrides
 ```
 
@@ -98,8 +101,18 @@ class CoreMethod
 - `fn` - The actual function (outer wrapper)
 - `definer` - Object that defined this method
 - `source` - Original source code (for serialization)
-- `disallowOverrides` - Flag to prevent overriding
+- `overrideable` - Flag allowing children to override (default: false)
+- `disallowOverrides` - Flag to prevent overriding (trumps overrideable)
 - `_importNames` - Cached list of import parameter names
+
+### Override Semantics
+
+Methods are NOT overrideable by default (secure by default):
+
+1. Use `overrideable` header to allow children to override
+2. Child methods inherit `overrideable` from parent (propagates down)
+3. Use `disallow overrides` to stop the inheritance chain
+4. `disallowOverrides` trumps `overrideable` (hard lock)
 
 ---
 

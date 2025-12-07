@@ -120,6 +120,7 @@ class TextDump
         argsRaw:           null
         vars:              []
         body:              []
+        overrideable:      false
         disallowOverrides: false
         lineNum:           lineNum
       }
@@ -150,6 +151,10 @@ class TextDump
 
       if match = trimmed.match /^vars\s+(.+)$/
         @currentMethod.vars = match[1].split(/\s*,\s*/)
+        return
+
+      if trimmed is 'overrideable'
+        @currentMethod.overrideable = true
         return
 
       if trimmed is 'disallow overrides'
@@ -192,6 +197,7 @@ class TextDump
         objDef.methods[methodName] = {
           name:              methodName
           source:            method.source
+          overrideable:      method.overrideable
           disallowOverrides: method.disallowOverrides
         }
 
@@ -261,7 +267,9 @@ class TextDump
           console.error "Failed to compile method #{id}.#{methodName}:", error.message
           continue
 
-        flags = if methodDef.disallowOverrides then {disallowOverrides: true} else {}
+        flags = {}
+        flags.overrideable = true if methodDef.overrideable
+        flags.disallowOverrides = true if methodDef.disallowOverrides
         core.addMethod obj, methodName, fn, source, flags
 
     for id in sortedIds
@@ -344,6 +352,8 @@ class TextDump
             lines.push line
         else
           lines.push "method #{methodName}"
+          if methodDef.overrideable
+            lines.push "  overrideable"
           if methodDef.disallowOverrides
             lines.push "  disallow overrides"
           if methodDef.using?.length > 0

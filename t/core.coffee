@@ -240,17 +240,29 @@ describe 'Core', ->
 
       assert.equal result, 'from parent'
 
-    it 'child can override parent methods', ->
+    it 'child can override parent methods when overrideable', ->
       core   = new Core()
       parent = core.create()
       child  = core.create(parent)
 
-      core.addMethod parent, 'test', -> (ctx, args) -> 'parent'
+      core.addMethod parent, 'test', (-> (ctx, args) -> 'parent'), null, {overrideable: true}
       core.addMethod child,  'test', -> (ctx, args) -> 'child'
 
       result = core.call child, 'test', []
 
       assert.strictEqual result, 'child'
+
+    it 'child cannot override non-overrideable methods', ->
+      core   = new Core()
+      parent = core.create()
+      child  = core.create(parent)
+
+      core.addMethod parent, 'test', -> (ctx, args) -> 'parent'
+
+      assert.throws(
+        -> core.addMethod child, 'test', -> (ctx, args) -> 'child'
+        /Cannot override/
+      )
 
     it 'inherited method accesses definer namespace, not caller', ->
       core   = new Core()
@@ -275,11 +287,12 @@ describe 'Core', ->
       parent = core.create()
       child  = core.create(parent)
 
-      core.addMethod parent, 'test', ->
+      core.addMethod parent, 'test', (->
         (ctx, args) ->
           s = 'parent: ' + args[0]
           console.log {parent: s}
           s
+      ), null, {overrideable: true}
 
       core.addMethod child, 'test', (pass) ->
         (ctx, args) ->
