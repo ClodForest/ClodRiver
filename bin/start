@@ -29,10 +29,13 @@ serverPath = path.join rootDir, 'bin', 'server.coffee'
 
 logFd = fs.openSync logFile, 'a'
 
+clodFiles = process.argv[2..]
+
 nodeArgs = [
   '--enable-source-maps'
   '-r', path.join(rootDir, 'workaround', 'fix-coffee-line-numbers.js')
   serverPath
+  clodFiles...
 ]
 
 serverProc = spawn 'node', nodeArgs, {

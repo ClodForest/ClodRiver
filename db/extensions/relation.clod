@@ -1,0 +1,165 @@
+# Relation extensions for ClodMUD
+# v0.0.0
+# First-class relations between entities
+# vim: ft=coffee
+
+object $relations
+parent $root
+
+default_parent $relations
+
+method module_info
+  version:  'v0.0.0'
+  name:     'relations'
+  contents: $relations.descendents()
+
+
+object $relation
+parent $entity_base
+
+method init_relation
+  disallow overrides
+  using sender, caller, $root
+  vars subject, object, relation_type
+
+  if sender() is @ and caller() is $root
+    subject       = null
+    object        = null
+    relation_type = null
+
+method subject
+  vars subject
+
+  subject
+
+method object
+  vars object
+
+  object
+
+method endpoints
+  vars subject, object
+
+  {subject, object}
+
+method relation_type
+  vars relation_type
+
+  relation_type
+
+method set_relation_type
+  vars relation_type
+  args type
+
+  relation_type = type
+
+method connect
+  vars subject, object, relation_type
+  args new_subject, new_object, new_type
+
+  subject?.relation_departing(@)
+  object?.relation_departing(@)
+
+  subject       = new_subject
+  object        = new_object
+  relation_type = new_type if new_type?
+
+  subject?.relation_arriving(@)
+  object?.relation_arriving(@)
+
+  @
+
+method disconnect
+  vars subject, object
+
+  subject?.relation_departing(@)
+  object?.relation_departing(@)
+
+  subject = null
+  object  = null
+
+  @
+
+method other_end
+  vars subject, object
+  args from
+
+  if from is subject then object
+  else if from is object then subject
+  else null
+
+method is_connected
+  vars subject, object
+
+  subject? and object?
+
+
+object $symmetric_relation
+parent $relation
+
+method connect
+  vars subject, object, relation_type
+  args new_subject, new_object, new_type
+
+  subject?.relation_departing(@)
+  object?.relation_departing(@)
+
+  subject       = new_subject
+  object        = new_object
+  relation_type = new_type if new_type?
+
+  subject?.relation_arriving(@)
+  object?.relation_arriving(@)
+
+  @
+
+
+object $transitive_relation
+parent $relation
+
+method reaches
+  using $transitive_relation
+  vars relation_type
+  args target, visited = []
+
+  return true if @other_end(@subject()) is target
+
+  next_entity = @other_end(@subject())
+  return false if next_entity in visited
+
+  for r in next_entity.relations_of_type(relation_type)
+    if $transitive_relation.is_member_of(r)
+      return true if r.reaches(target, [visited..., next_entity])
+
+  false
+
+
+object $relation_type_registry
+
+method init_relation_type_registry
+  vars registry
+
+  registry ?= {}
+
+method register_type
+  vars registry
+  args type_name, properties = {}
+
+  registry[type_name] = properties
+
+method get_type
+  vars registry
+  args type_name
+
+  registry[type_name]
+
+method is_physical
+  args type_name
+
+  @get_type(type_name)?.physical ? false
+
+method transfers_force
+  args type_name
+
+  @get_type(type_name)?.transfers_force ? false
+

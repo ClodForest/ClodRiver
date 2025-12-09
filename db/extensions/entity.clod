@@ -1,0 +1,143 @@
+# Entity extensions for ClodMUD
+# v0.0.0
+# Semantic entity model with type membership
+# vim: ft=coffee
+
+object $entity
+parent $root
+
+default_parent $entity
+
+method module_info
+  version:  'v0.0.0'
+  name:     'entity'
+  contents: $entity.descendents()
+
+
+object $entity_base
+
+method init_entity_base
+  disallow overrides
+  using sender, caller, $root
+  vars types, relations
+
+  if sender() is @ and caller() is $root
+    types     = []
+    relations = []
+
+method entity_types
+  vars types
+
+  [types...]
+
+method has_type
+  using $entity_type
+  vars types
+  args type
+
+  for t in types
+    return true if t is type
+    return true if $entity_type.is_member_of(t) and t.implies_type(type)
+
+  false
+
+method add_type
+  vars types
+  args type
+
+  types = [types..., type] unless type in types
+
+method remove_type
+  vars types
+  args type
+
+  types = types.filter (t) -> t isnt type
+
+method relations
+  vars relations
+
+  [relations...]
+
+method relation_arriving
+  using sender
+  vars relations
+
+  relations = [relations..., sender()] unless sender() in relations
+
+method relation_departing
+  using sender
+  vars relations
+
+  relations = relations.filter (r) -> r isnt sender()
+
+method relations_of_type
+  vars relations
+  args relation_type
+
+  relations.filter (r) -> r.relation_type() is relation_type
+
+method related_to
+  vars relations
+  args other, relation_type
+
+  for r in relations
+    endpoints = r.endpoints()
+    if endpoints.subject is other or endpoints.object is other
+      if not relation_type? or r.relation_type() is relation_type
+        return r
+
+  null
+
+
+object $entity_type
+parent $entity_base
+
+method init_entity_type
+  disallow overrides
+  using sender, caller, $root
+  vars type_name, implied_types
+
+  if sender() is @ and caller() is $root
+    type_name     = null
+    implied_types = []
+
+method type_name
+  vars type_name
+
+  type_name ? @root_name()
+
+method set_type_name
+  vars type_name
+  args name
+
+  type_name = name
+
+method implied_types
+  vars implied_types
+
+  [implied_types...]
+
+method implies_type
+  vars implied_types
+  args type
+
+  return true if @ is type
+
+  for t in implied_types
+    return true if t is type
+    return true if t.implies_type?(type)
+
+  false
+
+method add_implied_type
+  vars implied_types
+  args type
+
+  implied_types = [implied_types..., type] unless type in implied_types
+
+method remove_implied_type
+  vars implied_types
+  args type
+
+  implied_types = implied_types.filter (t) -> t isnt type
+

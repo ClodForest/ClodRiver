@@ -1,0 +1,178 @@
+# LLM integration extensions for ClodMUD
+# v0.0.0
+# Interface for LLM-based property inference
+# vim: ft=coffee
+
+object $llm_module
+parent $root
+
+default_parent $llm_module
+
+method module_info
+  version:  'v0.0.0'
+  name:     'llm'
+  contents: $llm_module.descendents()
+
+
+object $llm
+
+method init_llm
+  disallow overrides
+  using sender, caller, $root
+  vars provider, model, cache_enabled
+
+  if sender() is @ and caller() is $root
+    provider      = null
+    model         = 'claude-3-haiku-20240307'
+    cache_enabled = true
+
+method configure
+  vars provider, model, cache_enabled
+  args options
+
+  provider      = options.provider      if options.provider?
+  model         = options.model         if options.model?
+  cache_enabled = options.cache_enabled if options.cache_enabled?
+
+method infer
+  args entity, predicate
+
+  context = @build_context(entity)
+  prompt  = @build_prompt(entity, predicate, context)
+
+  response = @call_llm(prompt)
+  @parse_response(response, predicate)
+
+method build_context
+  args entity
+
+  types: entity.entity_types().map (t) -> t.type_name?() ? t.root_name()
+  relations: entity.relations().map (r) ->
+    type: r.relation_type()
+    other: r.other_end(entity)?.root_name?() ? 'unknown'
+  name: entity.root_name()
+
+method build_prompt
+  args entity, predicate, context
+
+  type_list = context.types.join ', '
+  relation_desc = context.relations.map((r) -> "#{r.type} #{r.other}").join '; '
+
+  """
+  You are helping determine properties of objects in a text adventure game.
+
+  Object: #{context.name}
+  Types: #{type_list}
+  Relations: #{relation_desc or 'none'}
+
+  Question: What is the #{predicate} of this object?
+
+  Respond with a JSON object: {"value": <value>, "confidence": <0.0-1.0>, "reasoning": "<brief explanation>"}
+  For numeric values, use appropriate units. For boolean predicates, use true/false.
+  """
+
+method call_llm
+  vars provider
+  args prompt
+
+  unless provider?
+    return {error: 'no_provider', value: null, confidence: 0}
+
+  provider.complete(prompt)
+
+method parse_response
+  args response, predicate
+
+  return {value: null, confidence: 0} if response.error?
+
+  try
+    parsed = JSON.parse response.text
+    value: parsed.value
+    confidence: parsed.confidence ? 0.5
+    reasoning: parsed.reasoning
+
+  catch
+    @extract_simple_value(response.text, predicate)
+
+method extract_simple_value
+  args text, predicate
+
+  if match = text.match /(\d+(?:\.\d+)?)\s*(?:kg|kilograms?)/i
+    return {value: parseFloat(match[1]), confidence: 0.6}
+
+  if match = text.match /(\d+(?:\.\d+)?)\s*(?:l|liters?)/i
+    return {value: parseFloat(match[1]), confidence: 0.6}
+
+  if /\btrue\b/i.test text
+    return {value: true, confidence: 0.5}
+
+  if /\bfalse\b/i.test text
+    return {value: false, confidence: 0.5}
+
+  {value: text.trim(), confidence: 0.3}
+
+
+object $llm_provider
+
+method init_llm_provider
+  vars api_key, endpoint
+
+  api_key  = null
+  endpoint = null
+
+method configure
+  vars api_key, endpoint
+  args options
+
+  api_key  = options.api_key  if options.api_key?
+  endpoint = options.endpoint if options.endpoint?
+
+method complete
+  args prompt
+
+  {error: 'not_implemented', text: null}
+
+
+object $mock_llm_provider
+parent $llm_provider
+
+method init_mock_llm_provider
+  vars responses
+
+  responses = {}
+
+method add_response
+  vars responses
+  args pattern, response
+
+  responses[pattern] = response
+
+method complete
+  vars responses
+  args prompt
+
+  for pattern, response of responses
+    if prompt.indexOf(pattern) >= 0
+      return {text: JSON.stringify(response)}
+
+  @infer_from_prompt(prompt)
+
+method infer_from_prompt
+  args prompt
+
+  if /grand.*piano/i.test prompt
+    if /mass/i.test prompt
+      return {text: JSON.stringify({value: 500, confidence: 0.8, reasoning: 'Grand pianos typically weigh 400-600 kg'})}
+
+  if /rope/i.test prompt
+    if /mass/i.test prompt
+      return {text: JSON.stringify({value: 2, confidence: 0.7, reasoning: 'A climbing rope is typically 1-3 kg'})}
+    if /is_portable/i.test prompt
+      return {text: JSON.stringify({value: true, confidence: 0.9, reasoning: 'Ropes can be carried'})}
+
+  if /furniture/i.test prompt
+    if /is_portable/i.test prompt
+      return {text: JSON.stringify({value: false, confidence: 0.6, reasoning: 'Most furniture is not easily portable'})}
+
+  {text: JSON.stringify({value: null, confidence: 0.1, reasoning: 'Unable to determine'})}
+

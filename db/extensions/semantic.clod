@@ -1,0 +1,188 @@
+# Semantic query extensions for ClodMUD
+# v0.0.0
+# Property resolution through observations, relations, types, and inference
+# vim: ft=coffee
+
+object $semantic
+parent $root
+
+default_parent $semantic
+
+method module_info
+  version:  'v0.0.0'
+  name:     'semantic'
+  contents: $semantic.descendents()
+
+
+object $semantic_query
+
+method init_semantic_query
+  disallow overrides
+  using sender, caller, $root
+  vars observation_store, type_defaults, relation_derivations
+
+  if sender() is @ and caller() is $root
+    observation_store     = null
+    type_defaults         = {}
+    relation_derivations  = {}
+
+method set_observation_store
+  vars observation_store
+  args store
+
+  observation_store = store
+
+method resolve
+  vars observation_store
+  args entity, predicate
+
+  if obs = @find_observation(entity, predicate)
+    return {value: obs.value(), source: 'observation', confidence: obs.confidence()}
+
+  if result = @derive_from_relations(entity, predicate)
+    return result
+
+  if result = @derive_from_types(entity, predicate)
+    return result
+
+  @infer_and_cache(entity, predicate)
+
+method find_observation
+  vars observation_store
+  args entity, predicate
+
+  return null unless observation_store?
+
+  obs = observation_store.find(entity, predicate)
+  return null unless obs?
+  return null if obs.source() is 'pending'
+
+  obs
+
+method derive_from_relations
+  vars relation_derivations
+  args entity, predicate
+
+  derivation = relation_derivations[predicate]
+  return null unless derivation?
+
+  for r in entity.relations()
+    if result = derivation(entity, r)
+      return {value: result, source: 'relation', confidence: 0.9}
+
+  null
+
+method derive_from_types
+  vars type_defaults
+  args entity, predicate
+
+  for type in entity.entity_types()
+    type_name = type.type_name?() ? type.root_name()
+
+    if type_defaults[type_name]?[predicate]?
+      value = type_defaults[type_name][predicate]
+      return {value, source: 'type_default', confidence: 0.7}
+
+  null
+
+method infer_and_cache
+  using $llm, $observation
+  vars observation_store
+  args entity, predicate
+
+  unless $llm?
+    return {value: null, source: 'unknown', confidence: 0}
+
+  result = $llm.infer(entity, predicate)
+
+  if observation_store? and result.value?
+    obs = $observation.spawn()
+    obs.record(entity, predicate, result.value, result.confidence, 'llm')
+    observation_store.add(obs)
+
+  {value: result.value, source: 'llm', confidence: result.confidence}
+
+method register_type_default
+  vars type_defaults
+  args type_name, predicate, value
+
+  type_defaults[type_name] ?= {}
+  type_defaults[type_name][predicate] = value
+
+method register_relation_derivation
+  vars relation_derivations
+  args predicate, derivation_fn
+
+  relation_derivations[predicate] = derivation_fn
+
+
+object $predicate_registry
+
+method init_predicate_registry
+  disallow overrides
+  using sender, caller, $root
+  vars predicates
+
+  if sender() is @ and caller() is $root
+    predicates = {}
+
+method register
+  vars predicates
+  args name, definition
+
+  predicates[name] = definition
+
+method get
+  vars predicates
+  args name
+
+  predicates[name]
+
+method list
+  vars predicates
+
+  Object.keys predicates
+
+
+object $common_predicates
+parent $predicate_registry
+
+method init_common_predicates
+  @register 'mass',
+    unit: 'kg'
+    domain: 'physical'
+    description: 'The weight/mass of a physical object'
+
+  @register 'volume',
+    unit: 'liters'
+    domain: 'physical'
+    description: 'The volume of a physical object'
+
+  @register 'material',
+    domain: 'physical'
+    description: 'What the object is made of'
+
+  @register 'color',
+    domain: 'visual'
+    description: 'The primary color of the object'
+
+  @register 'is_portable',
+    domain: 'interaction'
+    boolean: true
+    description: 'Whether the object can be picked up and carried'
+
+  @register 'is_flammable',
+    domain: 'physical'
+    boolean: true
+    description: 'Whether the object can catch fire'
+
+  @register 'can_support_weight',
+    domain: 'physical'
+    unit: 'kg'
+    description: 'Maximum weight the object can support'
+
+  @register 'is_anchored',
+    domain: 'physical'
+    boolean: true
+    description: 'Whether the object is fixed in place'
+

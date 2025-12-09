@@ -1,81 +1,98 @@
-# 'VR' extensions on ClodMUD
+# Ownership extensions for ClodMUD
 # v0.0.0
 # Simple ownership model
-# - $owned:     tracks owned objects
-# - $owner:     tracks owners
-# - $group:     collection of owners
+# - $owned:           something that can be owned
+# - $ownership_group: a collection of owners (recursive membership)
+# vim: ft=coffee
 
-object 0
-name module
+object $ownership
+parent $root
+
+default_parent $ownership
 
 method module_info
-  using send
+  version:  'v0.0.0'
+  name:     'ownership'
+  contents: $ownership.descendents()
 
-  version: 'v0.0.0'
-  name:    'ownership'
-  contents: send $ownership.descendents
-
-object       $ownership
-parent       null
-
-default_root $ownership
 
 object $ownership_group
 
 method init_ownership_group
-  using get, set
+  vars members
 
-  set members: get('members') ? []
-
-method is_member_of
-  using get, set, send, $ownership_group
-  args candidate, group
-
-  if group instanceof @
-    return group.is_member candidate
-  else
-    return group is candidate
+  members ?= []
 
 method is_member
-  for member in get 'members'
+  using $ownership_group
+  vars members
+  args candidate
+
+  for member in members
     if member is candidate
       return true
 
-    if member instanceof $ownership_group and send member.is_member, candidate
+    if $ownership_group.is_member_of(member) and member.is_member(candidate)
       return true
 
   false
+
+method add_member
+  using sender
+  vars members
+  args new_member
+
+  unless sender() in members
+    throw "permissions"
+
+  members = [members..., new_member] unless new_member in members
+
+method remove_member
+  using sender
+  vars members
+  args old_member
+
+  unless sender() in members
+    throw "permissions"
+
+  members = members.filter (m) -> m isnt old_member
+
 
 object $owned
 
 method init_owned
-  using get, set
+  vars owners
 
-  set owners: [] unless get 'owners'
-
-method proxy_for
-  using sender
-  args target
-
-  set {target}
+  owners ?= []
 
 method owned_by
   disallow overrides
-  using get, $ownership_group
+  using $ownership_group
+  vars owners
   args prospective_owner
 
-  for current_owner in get 'owners'
-    if send $ownership_group.is_member_of, prospective_owner, current_owner
-      return true
+  for current_owner in owners
+    return true if current_owner is prospective_owner
+    return true if $ownership_group.is_member_of(current_owner) and current_owner.is_member(prospective_owner)
 
   false
 
 method add_owner
-  using get, set
-  args owner
+  using sender
+  vars owners
+  args new_owner
 
-  if not send @owned_by owner
+  unless @owned_by(sender())
     throw "permissions"
 
+  owners = [owners..., new_owner] unless new_owner in owners
 
-# vim: ft=coffee
+method remove_owner
+  using sender
+  vars owners
+  args old_owner
+
+  unless @owned_by(sender())
+    throw "permissions"
+
+  owners = owners.filter (o) -> o isnt old_owner

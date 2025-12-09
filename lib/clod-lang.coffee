@@ -161,20 +161,25 @@ class ClodLang
 
     # Get the last property (the method being called)
     lastProp = variable.properties[variable.properties.length - 1]
-    return unless lastProp?.constructor.name is 'Access'
-    return unless lastProp.name?.constructor.name is 'PropertyName'
 
-    methodName = lastProp.name.value
+    # Handle .methodName() (Access with PropertyName)
+    if lastProp?.constructor.name is 'Access' and lastProp.name?.constructor.name is 'PropertyName'
+      methodName = lastProp.name.value
 
-    # Don't transform _dispatch calls (avoid infinite loop)
-    return if methodName is '_dispatch'
+      # Don't transform _dispatch calls (avoid infinite loop)
+      return if methodName is '_dispatch'
 
-    # Build the object part (everything except the last property)
-    # We need to extract the base object and all properties except the last
-    @_convertToDispatch node, methodName
+      @_convertToDispatch node, methodName, false
+
+    # Handle [method_name]() (Index with expression)
+    else if lastProp?.constructor.name is 'Index'
+      # Transform the index expression
+      @_transformNode lastProp.index
+      @_convertToDispatch node, lastProp.index, true
 
   # Convert a Call node to use _dispatch
-  @_convertToDispatch: (callNode, methodName) ->
+  # isDynamic: true if methodName is an AST node (Index), false if it's a string literal
+  @_convertToDispatch: (callNode, methodName, isDynamic = false) ->
     variable = callNode.variable
 
     # Create the object expression (base + all props except last)
@@ -194,6 +199,7 @@ class ClodLang
     # For now, let's mark the node for post-processing
     callNode._clodDispatch = {
       methodName: methodName
+      isDynamic: isDynamic
       objBase: objBase
       objProps: objProps
       args: callNode.args
@@ -246,7 +252,11 @@ class ClodLang
 
       when 'Assign'
         @_collectTransforms node.value, transforms
-        @_collectTransforms node.variable, transforms
+        # Don't transform simple identifier assignment targets like `$foo = bar`
+        # They're variable declarations, not object references
+        # But DO transform property access like `$foo.bar = baz`
+        unless @_isSimpleIdentifier node.variable
+          @_collectTransforms node.variable, transforms
 
       when 'Code'
         @_collectTransforms node.body, transforms
@@ -304,6 +314,12 @@ class ClodLang
       when 'Splat'
         @_collectTransforms node.name, transforms
 
+      when 'StringWithInterpolations'
+        @_collectTransforms node.body, transforms
+
+      when 'Interpolation'
+        @_collectTransforms node.expression, transforms
+
       else
         # Generic traversal for unknown types
         @_collectTransforms node.body, transforms if node.body?
@@ -312,10 +328,16 @@ class ClodLang
           for arg in node.args
             @_collectTransforms arg, transforms
 
+  # Check if a node is a simple identifier (no property access)
+  @_isSimpleIdentifier: (node) ->
+    return false unless node?.constructor.name is 'Value'
+    return false unless node.base?.constructor.name is 'IdentifierLiteral'
+    not node.properties?.length
+
   @_collectValueTransforms: (node, transforms) ->
     return unless node?.base?
 
-    # Handle nested calls/parens/arrays/objects
+    # Handle nested calls/parens/arrays/objects/strings
     if node.base.constructor.name is 'Call'
       @_collectCallTransforms node.base, transforms
     if node.base.constructor.name is 'Parens'
@@ -326,6 +348,8 @@ class ClodLang
     if node.base.constructor.name is 'Obj'
       for prop in node.base.properties or []
         @_collectTransforms prop.value, transforms if prop.value?
+    if node.base.constructor.name is 'StringWithInterpolations'
+      @_collectTransforms node.base.body, transforms
 
     # Transform $name to toobj('$name')
     if node.base.constructor.name is 'IdentifierLiteral'
@@ -362,38 +386,65 @@ class ClodLang
     return unless variable.properties?.length > 0
 
     lastProp = variable.properties[variable.properties.length - 1]
-    return unless lastProp?.constructor.name is 'Access'
-    return unless lastProp.name?.constructor.name is 'PropertyName'
 
-    methodName = lastProp.name.value
+    # Handle .methodName() (Access with PropertyName)
+    if lastProp?.constructor.name is 'Access' and lastProp.name?.constructor.name is 'PropertyName'
+      methodName = lastProp.name.value
 
-    # Don't transform _dispatch or toobj calls
-    return if methodName in ['_dispatch', 'toobj']
+      # Don't transform _dispatch or toobj calls
+      return if methodName in ['_dispatch', 'toobj']
 
-    # Get the location of the entire call
-    callLoc = node.locationData
+      # Get the location of the entire call
+      callLoc = node.locationData
 
-    # Get the location of the object part (base + props except last)
-    objStart = variable.base.locationData.range[0]
-    # End at the start of the last property (includes everything before the dot)
-    objEnd = lastProp.locationData.range[0]
+      # Get the location of the object part (base + props except last)
+      objStart = variable.base.locationData.range[0]
+      # End at the start of the last property (includes everything before the dot)
+      objEnd = lastProp.locationData.range[0]
 
-    # Build args string from args
-    argsLoc = null
-    if node.args?.length > 0 and node.args[0].locationData?
-      argsStart = node.args[0].locationData.range[0]
-      argsEnd = node.args[node.args.length - 1].locationData.range[1]
-      argsLoc = {start: argsStart, end: argsEnd}
+      # Build args string from args
+      argsLoc = null
+      if node.args?.length > 0 and node.args[0].locationData?
+        argsStart = node.args[0].locationData.range[0]
+        argsEnd = node.args[node.args.length - 1].locationData.range[1]
+        argsLoc = {start: argsStart, end: argsEnd}
 
-    transforms.push {
-      type: 'call'
-      start: callLoc.range[0]
-      end: callLoc.range[1]
-      objStart: objStart
-      objEnd: objEnd
-      methodName: methodName
-      argsLoc: argsLoc
-    }
+      transforms.push {
+        type: 'call'
+        start: callLoc.range[0]
+        end: callLoc.range[1]
+        objStart: objStart
+        objEnd: objEnd
+        methodName: methodName
+        argsLoc: argsLoc
+      }
+
+    # Handle [method_name]() (Index with expression)
+    else if lastProp?.constructor.name is 'Index'
+      # Get location info
+      callLoc = node.locationData
+      objStart = variable.base.locationData.range[0]
+      objEnd = lastProp.locationData.range[0]
+
+      # Get the index expression location (the method name variable)
+      indexLoc = lastProp.index.locationData
+
+      # Build args string from args
+      argsLoc = null
+      if node.args?.length > 0 and node.args[0].locationData?
+        argsStart = node.args[0].locationData.range[0]
+        argsEnd = node.args[node.args.length - 1].locationData.range[1]
+        argsLoc = {start: argsStart, end: argsEnd}
+
+      transforms.push {
+        type: 'call'
+        start: callLoc.range[0]
+        end: callLoc.range[1]
+        objStart: objStart
+        objEnd: objEnd
+        methodNameLoc: indexLoc  # Dynamic method name - use location instead of literal
+        argsLoc: argsLoc
+      }
 
   # Apply collected transforms
   @_applyTransforms: (code, transforms) ->
@@ -417,8 +468,8 @@ class ClodLang
     result = code
     for t in filtered
       if t.type is 'call'
-        # Extract and transform object part
-        objPart = @_transformObjectPart code.substring(t.objStart, t.objEnd)
+        # Extract and recursively transform object part (handles nested method calls)
+        objPart = @_transformCode code.substring(t.objStart, t.objEnd)
         # Extract and recursively transform args (handles nested calls)
         argsPart = if t.argsLoc?
           argsCode = code.substring(t.argsLoc.start, t.argsLoc.end)
@@ -427,10 +478,17 @@ class ClodLang
           ''
 
         # Build _dispatch call
-        if argsPart
-          replacement = "_dispatch(#{objPart}, '#{t.methodName}', #{argsPart})"
+        # Handle dynamic method names (from bracket notation)
+        if t.methodNameLoc?
+          methodNameExpr = code.substring(t.methodNameLoc.range[0], t.methodNameLoc.range[1])
+          methodNamePart = @_transformCode methodNameExpr
         else
-          replacement = "_dispatch(#{objPart}, '#{t.methodName}')"
+          methodNamePart = "'#{t.methodName}'"
+
+        if argsPart
+          replacement = "_dispatch(#{objPart}, #{methodNamePart}, #{argsPart})"
+        else
+          replacement = "_dispatch(#{objPart}, #{methodNamePart})"
 
         before = result.substring 0, t.start
         after = result.substring t.end

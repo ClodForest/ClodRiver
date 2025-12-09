@@ -1,0 +1,198 @@
+# Observation extensions for ClodMUD
+# v0.0.0
+# Cached inferences with provenance and confidence
+# vim: ft=coffee
+
+object $observations
+parent $root
+
+default_parent $observations
+
+method module_info
+  version:  'v0.0.0'
+  name:     'observations'
+  contents: $observations.descendents()
+
+
+object $observation
+parent $entity_base
+
+method init_observation
+  disallow overrides
+  using sender, caller, $root
+  vars subject, predicate, value, confidence, source, timestamp
+
+  if sender() is @ and caller() is $root
+    subject    = null
+    predicate  = null
+    value      = null
+    confidence = 1.0
+    source     = 'user'
+    timestamp  = Date.now()
+
+method subject
+  vars subject
+
+  subject
+
+method predicate
+  vars predicate
+
+  predicate
+
+method value
+  vars value
+
+  value
+
+method confidence
+  vars confidence
+
+  confidence
+
+method source
+  vars source
+
+  source
+
+method timestamp
+  vars timestamp
+
+  timestamp
+
+method record
+  vars subject, predicate, value, confidence, source, timestamp
+  args subj, pred, val, conf = 1.0, src = 'user'
+
+  subject    = subj
+  predicate  = pred
+  value      = val
+  confidence = conf
+  source     = src
+  timestamp  = Date.now()
+
+  @
+
+method update_value
+  vars value, confidence, source, timestamp
+  args new_value, new_confidence, new_source
+
+  value      = new_value
+  confidence = new_confidence if new_confidence?
+  source     = new_source     if new_source?
+  timestamp  = Date.now()
+
+  @
+
+method is_stale
+  vars timestamp
+  args max_age_ms = 3600000
+
+  Date.now() - timestamp > max_age_ms
+
+method matches
+  vars subject, predicate
+  args query_subject, query_predicate
+
+  return false unless subject is query_subject
+  return true  unless query_predicate?
+
+  predicate is query_predicate
+
+
+object $observation_store
+
+method init_observation_store
+  disallow overrides
+  using sender, caller, $root
+  vars observations, index_by_subject
+
+  if sender() is @ and caller() is $root
+    observations      = []
+    index_by_subject  = {}
+
+method add
+  using $observation
+  vars observations, index_by_subject
+  args obs
+
+  unless $observation.is_member_of(obs)
+    throw new Error "observation_store.add requires an $observation"
+
+  observations = [observations..., obs]
+
+  subj = obs.subject()
+  if subj?
+    key = @_entity_key(subj)
+    index_by_subject[key] ?= []
+    index_by_subject[key] = [index_by_subject[key]..., obs]
+
+  obs
+
+method remove
+  vars observations, index_by_subject
+  args obs
+
+  observations = observations.filter (o) -> o isnt obs
+
+  subj = obs.subject()
+  if subj?
+    key = @_entity_key(subj)
+    if index_by_subject[key]?
+      index_by_subject[key] = index_by_subject[key].filter (o) -> o isnt obs
+
+  obs
+
+method find
+  vars index_by_subject
+  args subject, predicate
+
+  key = @_entity_key(subject)
+  candidates = index_by_subject[key] ? []
+
+  for obs in candidates
+    if obs.matches(subject, predicate)
+      return obs
+
+  null
+
+method find_all
+  vars index_by_subject
+  args subject, predicate
+
+  key = @_entity_key(subject)
+  candidates = index_by_subject[key] ? []
+
+  candidates.filter (obs) -> obs.matches(subject, predicate)
+
+method find_or_create
+  using $observation
+  args subject, predicate
+
+  existing = @find(subject, predicate)
+  return existing if existing?
+
+  obs = $observation.spawn()
+  obs.record(subject, predicate, null, 0, 'pending')
+  @add(obs)
+
+  obs
+
+method clear_for_subject
+  vars observations, index_by_subject
+  args subject
+
+  key = @_entity_key(subject)
+  to_remove = index_by_subject[key] ? []
+
+  observations = observations.filter (o) -> o not in to_remove
+  delete index_by_subject[key]
+
+  to_remove.length
+
+method _entity_key
+  using toint
+  args entity
+
+  '' + toint(entity)
+

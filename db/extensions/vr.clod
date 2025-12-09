@@ -1,21 +1,34 @@
+# VR (Virtual Reality) extensions for ClodMUD
+# v0.0.0
+# Basic spatial model: rooms, exits, containers, movement
 # vim: ft=coffee
 
 object $vr
-default_root $vr
+parent $root
+
+default_parent $vr
+
 
 object $described
 
 method description
   vars description
 
-  description or "You seen nothing special."
+  description ? "You see nothing special."
+
+method set_description
+  vars description
+  args new_description
+
+  description = new_description
+
 
 object $container
 
 method init_container
   disallow overrides
-  vars contents
   using sender, caller, $root
+  vars contents
 
   if sender() is @ and caller() is $root
     contents = []
@@ -23,70 +36,136 @@ method init_container
 method contents
   vars contents
 
-  contents
+  [contents...]  # cloned to prevent mutation
 
 method contained_leaving
+  using sender
   vars contents
-  using sender()
 
   contents = contents.filter (item) -> item isnt sender()
 
 method contained_entering
+  using sender
   vars contents
-  using sender()
 
-  contents.push sender()
+  contents = [contents..., sender()] unless sender() in contents
 
 
 object $contained
+
+method init_contained
+  using sender, caller, $root
+  vars location
+
+  if sender() is @ and caller() is $root
+    location = null
+
+method location
+  vars location
+
+  location
 
 method move_to
   vars location
   args destination
 
-  send location?.contained_leaving
+  location?.contained_leaving()
   destination.contained_entering()
+  location = destination
 
 
 object $room
 parent $container
 
 method init_room
+  disallow overrides
+  using sender, caller, $root
   vars exits
 
   if sender() is @ and caller() is $root
-    exits = []
+    exits = {}
+
+method exits
+  vars exits
+
+  exits
+
+method add_exit
+  vars exits
+  args direction, exit
+
+  exits[direction] = exit
+
+method find_exit
+  vars exits
+  args direction
+
+  exits[direction]
+
 
 object $exit
 parent $described
 
-method validate_endpoints
-  args src, dst
+method init_exit
+  using sender, caller, $root
+  vars src, dst
 
-  src_parents = src?.ancestors() and
-  dst_parents = dst?.ancestors() and
-  $room in src_parents           and
-  $room in dst_parents
+  if sender() is @ and caller() is $root
+    src = null
+    dst = null
+
+method endpoints
+  vars src, dst
+
+  {src, dst}
 
 method connect
-  vars ends
-  args src, dst
+  using $room
+  vars src, dst
+  args new_src, new_dst
 
-  unless @validate_endpoints src, destionation
-    throw new Error "args to $exit.connect must be children of $room"
+  unless $room.is_member_of(new_src) and $room.is_member_of(new_dst)
+    throw new Error "args to $exit.connect must be descendants of $room"
 
-  try
-    old_ends = ends
+  # Disconnect from old endpoints
+  src?.exit_disconnecting(@)
+  dst?.entrance_disconnecting(@)
 
-    if ends
-      ends.src.exit_disconnecting()
-      ends.dst.entrance_disconnecting()
+  # Connect to new endpoints
+  new_src.exit_connecting(@)
+  new_dst.entrance_connecting(@)
 
-    src.exit_connecting()
-    dst.entrance_connecting()
+  src = new_src
+  dst = new_dst
 
-    ends = {src, dst}
-  catch e
-    if old_ends
-      old_ends.src
-    
+method traverse
+  vars dst
+
+  dst
+
+
+object $room
+# Additional methods for $room (extending earlier definition)
+
+method exit_connecting
+  using sender
+  vars exits
+
+  # Called by $exit when connecting - room can track if needed
+
+method exit_disconnecting
+  using sender
+  vars exits
+
+  # Called by $exit when disconnecting
+
+method entrance_connecting
+  using sender
+
+  # Called when this room becomes a destination
+
+method entrance_disconnecting
+  using sender
+
+  # Called when this room stops being a destination
+

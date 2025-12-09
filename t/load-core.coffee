@@ -88,15 +88,16 @@ test 'core_toobj: looks up object by name in child Core', ->
     loadMethod.invoke core, holder, loadCtx, [tmpFile, holder]
 
     # Now test core_toobj
+    # The new signature uses ctx.obj as holder, so just pass the ref
     fn = (core_toobj) ->
       (ctx, args) ->
-        [holderObj, name] = args
-        core_toobj holderObj, name
+        [name] = args
+        core_toobj name
 
     method = new CoreMethod 'lookup', fn, $root
     ctx    = new ExecutionContext core, holder, method
 
-    $widget = method.invoke core, holder, ctx, [holder, '$widget']
+    $widget = method.invoke core, holder, ctx, ['$widget']
 
     assert.ok $widget?
     assert.ok $widget._id?
@@ -142,16 +143,16 @@ test 'core_call: calls method on child Core object', ->
     holder._childCore.addMethod $greeter, 'greet', greetFn
 
     # Now test core_call
+    # The new signature uses ctx.obj as holder
     fn = (core_toobj, core_call) ->
       (ctx, args) ->
-        [holderObj, name] = args
-        obj = core_toobj holderObj, '$greeter'
-        core_call holderObj, obj, 'greet', 'World'
+        obj = core_toobj '$greeter'
+        core_call obj, 'greet', 'World'
 
     method = new CoreMethod 'test', fn, $root
     ctx    = new ExecutionContext core, holder, method
 
-    result = method.invoke core, holder, ctx, [holder, '$greeter']
+    result = method.invoke core, holder, ctx, []
 
     assert.strictEqual result, 'Hello, World!'
   finally
@@ -332,18 +333,19 @@ test 'core_call: returns plain values unchanged', ->
     holder._childCore.addMethod $calc, 'getObject', -> (ctx, args) -> {a: 1, b: 2}
 
     # Test core_call with different return types
+    # The new signature uses ctx.obj as holder
     fn = (core_toobj, core_call) ->
       (ctx, args) ->
-        [holderObj, methodName] = args
-        obj = core_toobj holderObj, '$calculator'
-        core_call holderObj, obj, methodName
+        [methodName] = args
+        obj = core_toobj '$calculator'
+        core_call obj, methodName
 
     method = new CoreMethod 'test', fn, $root
     ctx    = new ExecutionContext core, holder, method
 
-    assert.strictEqual method.invoke(core, holder, ctx, [holder, 'getNumber']), 42
-    assert.strictEqual method.invoke(core, holder, ctx, [holder, 'getString']), 'hello'
-    assert.deepStrictEqual method.invoke(core, holder, ctx, [holder, 'getArray']), [1, 2, 3]
-    assert.deepStrictEqual method.invoke(core, holder, ctx, [holder, 'getObject']), {a: 1, b: 2}
+    assert.strictEqual method.invoke(core, holder, ctx, ['getNumber']), 42
+    assert.strictEqual method.invoke(core, holder, ctx, ['getString']), 'hello'
+    assert.deepStrictEqual method.invoke(core, holder, ctx, ['getArray']), [1, 2, 3]
+    assert.deepStrictEqual method.invoke(core, holder, ctx, ['getObject']), {a: 1, b: 2}
   finally
     fs.unlinkSync tmpFile

@@ -2,49 +2,77 @@
 
 path = require 'node:path'
 fs   = require 'node:fs'
+{execSync} = require 'node:child_process'
 
 rootDir = path.resolve __dirname, '..'
 pidFile = path.join rootDir, 'var', 'run', 'clodriver.pid'
 
-unless fs.existsSync pidFile
-  console.log "ClodRiver is not running (no PID file found)"
-  process.exit 1
+killPid = (pid) ->
+  try
+    process.kill pid, 'SIGTERM'
+    console.log "Stopping ClodRiver (PID #{pid})..."
 
-pid = parseInt fs.readFileSync(pidFile, 'utf8').trim()
+    # Wait for process to exit (up to 5 seconds)
+    maxWait = 50
+    waited = 0
 
-try
-  process.kill pid, 0
-catch
-  console.log "ClodRiver is not running (stale PID file)"
-  fs.unlinkSync pidFile
-  process.exit 1
+    while waited < maxWait
+      await new Promise (resolve) -> setTimeout resolve, 100
+      waited++
+      try
+        process.kill pid, 0
+      catch
+        # Process is gone
+        return true
 
-try
-  process.kill pid, 'SIGTERM'
-  console.log "Stopping ClodRiver (PID #{pid})..."
+    # Still running after 5 seconds
+    console.log "Process did not stop gracefully, sending SIGKILL..."
+    process.kill pid, 'SIGKILL'
+    return true
 
-  # Wait for process to exit (up to 5 seconds)
-  maxWait = 50
-  waited = 0
+  catch error
+    console.error "Failed to stop PID #{pid}: #{error.message}"
+    return false
 
-  while waited < maxWait
-    await new Promise (resolve) -> setTimeout resolve, 100
-    waited++
+# Find and kill any orphan server processes
+killOrphanServers = ->
+  try
+    output = execSync('pgrep -f "coffee.*bin/server"', {encoding: 'utf8'})
+    pids = output.trim().split('\n').filter((p) -> p).map((p) -> parseInt(p))
 
-    try
-      process.kill pid, 0
-    catch
-      # Process is gone
-      fs.unlinkSync pidFile if fs.existsSync pidFile
-      console.log "ClodRiver stopped"
-      process.exit 0
+    if pids.length > 0
+      console.log "Found orphan server process(es): #{pids.join(', ')}"
+      for pid in pids
+        await killPid pid
+      return true
+    return false
+  catch
+    # No matching processes found
+    return false
 
-  # Still running after 5 seconds
-  console.log "Process did not stop gracefully, sending SIGKILL..."
-  process.kill pid, 'SIGKILL'
+stopped = false
+
+# Try PID file first
+if fs.existsSync pidFile
+  pid = parseInt fs.readFileSync(pidFile, 'utf8').trim()
+
+  try
+    process.kill pid, 0
+    stopped = await killPid pid
+  catch
+    console.log "ClodRiver is not running (stale PID file)"
+
   fs.unlinkSync pidFile if fs.existsSync pidFile
-  console.log "ClodRiver killed"
+else
+  console.log "No PID file found"
 
-catch error
-  console.error "Failed to stop ClodRiver: #{error.message}"
-  process.exit 1
+# Also check for orphan processes
+orphansKilled = await killOrphanServers()
+stopped = stopped or orphansKilled
+
+if stopped
+  console.log "ClodRiver stopped"
+  process.exit 0
+else
+  console.log "ClodRiver is not running"
+  process.exit 0

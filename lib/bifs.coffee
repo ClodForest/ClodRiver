@@ -38,16 +38,19 @@ class BIFs
     "##{value._id}"
 
   # XXX: possible scaling hotspot on large DBs?
-  children: (obj) =>
+  children: (ctx, obj = null) =>
+    target = obj ? ctx.obj
     result = []
 
     for id, candidate of @core.objectIDs
       proto = Object.getPrototypeOf candidate
-      result.push candidate if proto is obj
+      result.push candidate if proto is target
 
     result
 
-  parent: (obj) => Object.getPrototypeOf this
+  parent: (ctx, obj = null) =>
+    target = obj ? ctx.obj
+    Object.getPrototypeOf target
 
   lookup_method: (obj, methodName) =>
     current = obj
@@ -109,6 +112,46 @@ class BIFs
     # Create a wrapper function with imports as parameters
     wrapper = eval "(function(#{imports.join ', '}) { return #{jsCode}; })"
     wrapper.apply null, values
+
+  # Child Core Management
+  load_core: (ctx, filePath, childHolder) =>
+    fs       = require 'node:fs'
+    pathMod  = require 'node:path'
+    Core     = require './core'
+
+    # Load and parse the .clod file
+    # Handle both absolute and relative paths
+    fullPath = if pathMod.isAbsolute filePath
+      filePath
+    else
+      pathMod.join process.cwd(), filePath
+    source   = fs.readFileSync fullPath, 'utf8'
+    filename = pathMod.basename fullPath
+    dump     = TextDump.fromString source, filename
+
+    # Create a new Core for the child
+    childCore = new Core()
+    dump.apply childCore
+
+    # Store the child core on the holder for later access
+    childHolder._childCore = childCore
+
+    # Call accept_core on the holder to notify it (if method exists)
+    @core.callIfExists childHolder, 'accept_core', []
+
+    # Return the holder for chaining
+    childHolder
+
+  core_toobj: (ctx, ref) =>
+    # Get the child core from the context's object's holder
+    childCore = ctx.obj._childCore
+    throw new Error "No child core found" unless childCore?
+    childCore.toobj ref
+
+  core_call: (ctx, obj, methodName, args...) =>
+    childCore = ctx.obj._childCore
+    throw new Error "No child core found" unless childCore?
+    childCore.call obj, methodName, args
 
   # Persistence
   textdump: (ctx, relativePath) =>
@@ -232,27 +275,6 @@ class BIFs
       throw new Error "require() can only be called on $sys"
 
     require moduleName
-
-  # Core loading
-  load_core: (ctx, path, holder) =>
-    fs   = require 'node:fs'
-    Core = require './core'
-
-    source    = fs.readFileSync path, 'utf8'
-    dump      = TextDump.fromString source
-    childCore = new Core()
-    dump.apply childCore
-
-    holder._childCore = childCore
-    holder
-
-  core_toobj: (ctx, holder, name) =>
-    throw new Error "No child core" unless holder._childCore?
-    holder._childCore.toobj name
-
-  core_call: (ctx, holder, obj, methodName, args...) =>
-    throw new Error "No child core" unless holder._childCore?
-    holder._childCore.call obj, methodName, args
 
   core_destroy: (ctx, holder) =>
     delete holder._childCore

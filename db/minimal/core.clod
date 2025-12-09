@@ -7,13 +7,25 @@ parent 1
 name sys
 
 method startup
-  using require, $connection
+  using require, $module_loader, $admin
   args options = {}
   vars port, addr
 
   process = require 'node:process'
   {port = 7777, addr = 'localhost'} = options
-  @spawn_listener($connection, {port, addr})
+
+  # Load networking module
+  net = $module_loader.load 'networking'
+
+  # Subscribe to connection events
+  net.on 'line', (conn, line) ->
+    $admin.receive_line line
+
+  net.on 'connected', (conn) ->
+    $admin.set_connection conn
+
+  # Start listener with module's connection class
+  @spawn_listener net.exports.connection, {port, addr}
 
 method shutdown
   using require
@@ -59,9 +71,10 @@ method textdump
 
 method require
   using sender, require
-  vars BIF_permission =
-    require: [$data, $admin]
+  vars BIF_permission
   args module
+
+  BIF_permission ?= {require: [$data, $admin]}
 
   if sender() not in BIF_permission.require
     throw new Error "Sender not authorized to use require"
@@ -81,12 +94,12 @@ method spawn_listener
 
 method load_core
   using sender, load_core
-  args relativePath
+  args relativePath, child_holder
 
   if sender() isnt $child_core_manager
     throw new Error "$sys.load_core is $child_core_manager-only"
 
-  load_core relativePath, sender()
+  load_core relativePath, child_holder
 
 
 object 1
@@ -95,12 +108,13 @@ name root
 default_parent $root
 
 method ancestors
-  using sender, get_parent
+  using parent
 
-  if parent = get_parent()
-    [parent, parent.ancestors()...]
+  p = parent()
+  if p? and p._id?
+    [p, p.ancestors()...]
   else
-    [parent]
+    []
   
 
 method eval_on
@@ -147,12 +161,13 @@ method init
   disallow overrides
   using toint, sender
 
-  if sender() isnt @
+  # Allow calls from self or from ancestors (for spawn pattern)
+  if sender() isnt @ and sender() not in @ancestors()
     throw "perm"
 
   errors = {}
 
-  for p in @parents().reverse()
+  for p in @ancestors().reverse()
     try
       methodName = "init_#{p.root_name()}"
 
@@ -168,7 +183,9 @@ method spawn
   disallow overrides
   using $sys
 
-  $sys.create(@)
+  newObj = $sys.create(@)
+  newObj.init()
+  newObj
 
 method root_name
   using $sys, toint
@@ -191,51 +208,6 @@ method list_methods
   using list_methods
 
   list_methods()
-
-
-object $connection
-
-method connected
-  using accept, $connection, $admin
-  args socketInfo
-
-  if socketInfo
-    # Called as listener - spawn new connection and accept it
-    connection = $connection.spawn()
-    accept connection
-  else
-    # Called as client connection - tell $admin about us
-    $admin.set_connection(@)
-
-method received
-  using emit, $admin
-  args incomingBuf
-  vars buf
-
-  buf ?= Buffer.from ''
-
-  currentBuf = Buffer.concat [buf, incomingBuf]
-  lines = currentBuf.toString().split /\r?\n/
-  buf = Buffer.from lines[lines.length - 1]
-
-  try
-    for line in lines[...-1]
-      console.log {admin: $admin, receive_line: $admin.receive_line}
-      $admin.receive_line(line)
-
-  catch e
-    emit e.toString()
-    throw e
-
-method emit
-  using emit
-  args data
-
-  emit data
-
-method disconnected
-  # Called when socket closes
-  # TODO: cleanup
 
 
 object $admin
@@ -360,30 +332,70 @@ method function_to_string
 object $child_core_manager
 
 method load_core
-  using sender, $admin, $sys
+  using sender, $admin, $sys, $module_loader
   args relativePath
 
-  if sender() not in [$admin, $sys]
-    throw new Error "Only $admin can $admin and $sys can load child cores."
+  if sender() not in [$admin, $sys, $module_loader]
+    throw new Error "Only $admin, $sys, and $module_loader can load child cores."
 
   child = $child_core.spawn()
   $sys.load_core relativePath, child
   child
 
 
+object $module_loader
+
+method load
+  using $child_core_manager
+  args module_name
+  vars modules
+
+  modules ?= {}
+
+  path = "db/modules/#{module_name}.clod"
+  holder = $child_core_manager.load_core path
+
+  modules[module_name] = holder
+  holder
+
+method get
+  vars modules
+  args module_name
+
+  modules?[module_name]
+
+
 object $child_core
 
+method init_child_core
+  disallow overrides
+  vars listeners, exports
+
+  listeners = {}
+  exports   = {}
+
+method on
+  vars listeners
+  args event_name, callback
+
+  listeners[event_name] ?= []
+  listeners[event_name].push callback
+
+method _emit
+  vars listeners
+  args event_name, args...
+
+  for callback in (listeners[event_name] ? [])
+    callback args...
+
 method accept_core
-  using $sys, sender
+  using core_toobj, core_call
   vars child_sys, child_root
-  
-  if sender() isnt $sys
-    throw new Error ".accept_core is $sys-only"
 
   child_sys  = core_toobj 0
   child_root = core_toobj 1
 
-  child_sys.loaded @
+  core_call child_sys, 'loaded', @
 
 method request_methods
   vars child_sys

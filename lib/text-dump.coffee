@@ -83,12 +83,14 @@ class TextDump
       @inData = false
       return
 
-    # parent $name
+    # parent $name - defer resolution to apply() time
     if match = trimmed.match /^parent\s+\$(\w+)$/
       throw new Error "parent outside object definition" unless @currentObject?
       name = match[1]
-      throw new Error "Unknown object $#{name}" unless @nameToId[name]?
-      @currentObject.parent = @nameToId[name]
+      if @nameToId[name]?
+        @currentObject.parent = @nameToId[name]
+      else
+        @currentObject.parent = {name: name}  # Deferred reference
       return
 
     # parent <numeric id>
@@ -97,11 +99,13 @@ class TextDump
       @currentObject.parent = parseInt match[1]
       return
 
-    # default_parent $name
+    # default_parent $name - defer resolution to apply() time
     if match = trimmed.match /^default_parent\s+\$(\w+)$/
       name = match[1]
-      throw new Error "Unknown object $#{name}" unless @nameToId[name]?
-      @defaultParent = @nameToId[name]
+      if @nameToId[name]?
+        @defaultParent = @nameToId[name]
+      else
+        @defaultParent = {name: name}  # Deferred reference
       return
 
     # name <identifier>
@@ -232,12 +236,25 @@ class TextDump
       else
         newObj = core.create null, objDef.name
         objRefs[id] = newObj
+        # Initialize the name in $root's namespace so root_name() can find it
+        # $root is object ID 1 (the definer of root_name method)
+        if objDef.name?
+          $root = core.toobj '$root'
+          rootId = $root?._id ? 1
+          newObj._state[rootId] ?= {}
+          newObj._state[rootId].name = objDef.name
 
-    # Second pass: set up parent relationships (handles forward references)
+    # Second pass: set up parent relationships (handles forward and external references)
     for id in sortedIds
       objDef = @objects[id]
       if objDef.parent?
-        parent = objRefs[objDef.parent]
+        if typeof objDef.parent is 'object' and objDef.parent.name?
+          # Deferred name reference - resolve from Core
+          parent = core.toobj "$#{objDef.parent.name}"
+          throw new Error "Unknown parent $#{objDef.parent.name} for object #{objDef.name or id}" unless parent?
+        else
+          # Numeric ID reference - resolve from objRefs
+          parent = objRefs[objDef.parent]
         child = objRefs[id]
         core.change_parent child, parent if parent?
 
@@ -394,7 +411,8 @@ class TextDump
     lines.push "  (ctx, args) ->"
 
     if methodDef.argsRaw and methodDef.argsRaw.trim() isnt ''
-      lines.push "    [#{methodDef.argsRaw}] = args"
+      transformedArgs = @_transformWithClodLang methodDef.argsRaw
+      lines.push "    [#{transformedArgs}] = args"
       lines.push ""
 
     # Load vars from state
