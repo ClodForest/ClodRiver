@@ -1,3 +1,5 @@
+# vim: ft=coffee
+
 object $vr
 default_root $vr
 
@@ -58,3 +60,33 @@ method init_room
 object $exit
 parent $described
 
+method validate_endpoints
+  args src, dst
+
+  src_parents = src?.ancestors() and
+  dst_parents = dst?.ancestors() and
+  $room in src_parents           and
+  $room in dst_parents
+
+method connect
+  vars ends
+  args src, dst
+
+  unless @validate_endpoints src, destionation
+    throw new Error "args to $exit.connect must be children of $room"
+
+  try
+    old_ends = ends
+
+    if ends
+      ends.src.exit_disconnecting()
+      ends.dst.entrance_disconnecting()
+
+    src.exit_connecting()
+    dst.entrance_connecting()
+
+    ends = {src, dst}
+  catch e
+    if old_ends
+      old_ends.src
+    

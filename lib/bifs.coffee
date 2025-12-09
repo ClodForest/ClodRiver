@@ -10,8 +10,9 @@ class BIFs
   constructor: (@core) ->
 
   # Core object management
-  create: (parent) =>
-    @core.create parent
+  create: (parent) => @core.create parent
+
+  destroy: (obj) => @core.destroy obj
 
   add_method: (obj, name, fn, source = null, flags = {}) =>
     @core.addMethod obj, name, fn, source, flags
@@ -36,13 +37,17 @@ class BIFs
     return String(value) unless value?._id?
     "##{value._id}"
 
-  # Introspection
+  # XXX: possible scaling hotspot on large DBs?
   children: (obj) =>
     result = []
+
     for id, candidate of @core.objectIDs
       proto = Object.getPrototypeOf candidate
       result.push candidate if proto is obj
+
     result
+
+  parent: (obj) => Object.getPrototypeOf this
 
   lookup_method: (obj, methodName) =>
     current = obj
@@ -256,9 +261,11 @@ class BIFs
   # Get all BIF names
   @bifNames: ->
     [
-      'create', 'add_method', 'add_obj_name', 'del_obj_name', 'rm_method',
+      'create', 'destroy',
+      'add_obj_name', 'del_obj_name',
       'toint', 'tostr',
-      'children', 'lookup_method', 'list_methods',
+      'children', 'parent',
+      'add_method', 'rm_method', 'lookup_method', 'list_methods',
       'compile', 'clod_eval',
       'textdump',
       'listen', 'accept', 'emit', 'emit_error', 'attach_stdio',

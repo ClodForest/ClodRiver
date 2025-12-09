@@ -2,12 +2,6 @@
 
 object $sys
 
-method lookup_obj_name
-  using toobj
-  args name
-
-  toobj name
-
 method loaded
   using $test
   vars parent_sys, module
@@ -18,6 +12,12 @@ method loaded
 
   @copy_parent_methods()
   @run_tests()
+
+method lookup_obj_name
+  using toobj
+  args name
+
+  toobj name
 
 method copy_parent_methods
   vars parent_sys, module

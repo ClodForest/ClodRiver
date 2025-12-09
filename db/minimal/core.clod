@@ -79,10 +79,29 @@ method spawn_listener
   newListener = connection_class.spawn()
   listen newListener, {port, addr}
 
+method load_core
+  using sender, load_core
+  args relativePath
+
+  if sender() isnt $child_core_manager
+    throw new Error "$sys.load_core is $child_core_manager-only"
+
+  load_core relativePath, sender()
+
+
 object 1
 name root
 
 default_parent $root
+
+method ancestors
+  using sender, get_parent
+
+  if parent = get_parent()
+    [parent, parent.ancestors()...]
+  else
+    [parent]
+  
 
 method eval_on
   using $sys, compile
@@ -337,7 +356,8 @@ method function_to_string
   else
     src
 
-object $core_manager
+
+object $child_core_manager
 
 method load_core
   using sender, $admin, $sys
@@ -349,6 +369,7 @@ method load_core
   child = $child_core.spawn()
   $sys.load_core relativePath, child
   child
+
 
 object $child_core
 
