@@ -578,7 +578,7 @@ method world_save
   unless name?
     return "No world name set. Use /world name <name> first."
 
-  path = "db/worlds/#{name}.json"
+  path = "clod/worlds/#{name}.json"
   json = ops.dump_world()
 
   unless json?
@@ -605,7 +605,7 @@ method world_load
   unless name?
     return "No world name set. Use /world name <name> first."
 
-  path = "db/worlds/#{name}.json"
+  path = "clod/worlds/#{name}.json"
   json = ops.read_file path
 
   unless json?
@@ -679,7 +679,7 @@ method module_status
   """
   Module System Status:
     Loaded modules: #{loaded.length}
-    Module path: db/modules/
+    Module paths: clod/minimal/, clod/transports/, clod/features/, clod/experimental/
   """
 
 method module_loaded
@@ -713,9 +713,9 @@ method module_available
   available = ops.list_available?(path) ? []
 
   if available.length is 0
-    return "No modules found in: db/modules/#{path}"
+    return "No modules available."
 
-  lines = ["Available modules in db/modules/#{path}:"]
+  lines = ["Available modules:"]
   for name in available
     lines.push "  #{name}"
 

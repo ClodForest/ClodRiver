@@ -237,21 +237,32 @@ object $module_loader
 method load
   using $child_core_manager, file_exists
   args module_name
-  vars modules
+  vars modules, registry
 
-  modules ?= {}
+  modules  ?= {}
+  registry ?= @module_registry()
 
-  path = "db/modules/#{module_name}.clod"
+  if registry[module_name]?
+    path = registry[module_name]
+  else
+    path = "clod/experimental/#{module_name}/index.clod"
 
   unless file_exists null, path
-    indexPath = "db/modules/#{module_name}/index.clod"
-    if file_exists null, indexPath
-      path = indexPath
+    throw new Error "Module not found: #{module_name}"
 
   holder = $child_core_manager.load_core path
 
   modules[module_name] = holder
   holder
+
+method module_registry
+  session:    'clod/minimal/interaction/session/index.clod'
+  player:     'clod/minimal/interaction/player/index.clod'
+  admin:      'clod/minimal/interaction/admin/index.clod'
+  data:       'clod/minimal/interaction/data/index.clod'
+  world:      'clod/minimal/world/spatial/index.clod'
+  networking: 'clod/transports/network/index.clod'
+  readline:   'clod/features/readline/index.clod'
 
 method get
   vars modules
@@ -267,20 +278,17 @@ method list_loaded
 
 method list_available
   using list_dir, file_exists
-  args subpath = '.'
 
-  basePath = if subpath is '.' then 'db/modules' else "db/modules/#{subpath}"
-  results  = []
+  registry = @module_registry()
+  results  = Object.keys registry
 
-  entries = list_dir null, basePath
+  expEntries = list_dir null, 'clod/experimental'
 
-  for entry in entries
-    if entry.type is 'file' and entry.name.endsWith '.clod'
-      results.push entry.name.replace /\.clod$/, ''
-    else if entry.type is 'dir'
-      indexPath = "#{basePath}/#{entry.name}/index.clod"
+  for entry in expEntries
+    if entry.type is 'dir'
+      indexPath = "clod/experimental/#{entry.name}/index.clod"
       if file_exists null, indexPath
-        results.push entry.name + '/'
+        results.push entry.name unless entry.name in results
 
   results
 

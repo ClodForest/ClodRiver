@@ -8,7 +8,7 @@ rootDir = path.resolve __dirname, '..'
 clodFiles = process.argv[2..]
 
 if clodFiles.length is 0
-  clodFiles = [path.join rootDir, 'db', 'minimal', 'core.clod']
+  clodFiles = [path.join rootDir, 'clod', 'minimal', 'bootstrap', 'index.clod']
 else
   clodFiles = clodFiles.map (f) ->
     if path.isAbsolute f then f else path.resolve rootDir, f

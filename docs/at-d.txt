@@ -1,0 +1,13 @@
+@d      descriptor
+  This is a whole topic. 'd' is short for display. The descriptor is an
+  optional object specifier, an optional method specifier and an optional
+  object var specifier. Anything after the first '.' is a method specifier.
+  Anything after the first "'" or '"' is a var specifier where single quote
+  refers to object state associated with the specified object and double quote
+  refers to all state on the object.
+
+  An object can be a $ref, #num or an in-world reference like 'here' or 'me'.
+
+  Multiple objects can be specified by separating them with commas.
+
+  Method specifiers use shell glob matching
