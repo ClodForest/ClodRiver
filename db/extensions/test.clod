@@ -1,6 +1,5 @@
 # Test framework for ClodMUD
 # v0.0.0
-# vim: ft=coffee
 
 object $testing
 parent $root

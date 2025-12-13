@@ -1,21 +1,22 @@
 # Networking module for ClodMUD
 # v0.0.0
 # Connection protocol with event emission
-# vim: ft=coffee
 
 object 0
 parent 1
 name sys
 
 method loaded
-  args holder
+  args module
+  vars module_interface
 
-  holder.exports = {
-    connection: $connection
-  }
+  module_interface = module
 
-  # Store holder directly on $connection for emit_event to find via prototype chain
-  $connection._holder = holder
+  # Store module interface on $connection for emit_event to access via prototype chain
+  # This is JS property access, but uses the controlled module interface rather than raw holder
+  $connection._module = module
+
+  module.exports.connection = $connection
 
 
 object 1
@@ -74,6 +75,7 @@ method disconnected
 method emit_event
   args event_name, data
 
-  # Access holder via prototype chain (_holder is on $connection, inherited by spawned connections)
-  @_holder?._emit?(event_name, @, data)
+  # Access module interface via prototype chain (_module is on $connection, inherited by spawned connections)
+  # Uses module.emit() which invokes the lambda callback into parent core
+  @_module?.emit?(event_name, @, data)
 

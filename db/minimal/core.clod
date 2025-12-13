@@ -1,6 +1,5 @@
 # Minimal ClodMUD core v0.0.0
 # Straight from the top of the dome of Robert de Forest <robert@defore.st>
-# vim: ft=coffee
 
 object 0
 parent 1
@@ -25,7 +24,7 @@ method startup
     $admin.set_connection conn
 
   # Start listener with module's connection class
-  @spawn_listener net.exports.connection, {port, addr}
+  @spawn_listener net.exports().connection, {port, addr}
 
 method shutdown
   using require
@@ -390,12 +389,25 @@ method _emit
 
 method accept_core
   using core_toobj, core_call
-  vars child_sys, child_root
+  vars child_sys, exports
 
-  child_sys  = core_toobj 0
-  child_root = core_toobj 1
+  child_sys = core_toobj 0
+  handler   = @
 
-  core_call child_sys, 'loaded', @
+  # Create shared exports object stored in holder's vars
+  exports = {}
+
+  module = Object.assign {},
+    request_methods: (args...) -> handler.request_methods args...
+    emit:            (event, args...) -> handler._emit event, args...
+    exports:         exports
+
+  core_call child_sys, 'loaded', module
+
+method exports
+  vars exports
+
+  exports
 
 method request_methods
   vars child_sys

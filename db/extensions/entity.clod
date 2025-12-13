@@ -1,7 +1,6 @@
 # Entity extensions for ClodMUD
 # v0.0.0
 # Semantic entity model with type membership
-# vim: ft=coffee
 
 object $entity
 parent $root

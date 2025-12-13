@@ -1,7 +1,6 @@
 # Observation extensions for ClodMUD
 # v0.0.0
 # Cached inferences with provenance and confidence
-# vim: ft=coffee
 
 object $observations
 parent $root

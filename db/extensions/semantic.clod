@@ -1,7 +1,6 @@
 # Semantic query extensions for ClodMUD
 # v0.0.0
 # Property resolution through observations, relations, types, and inference
-# vim: ft=coffee
 
 object $semantic
 parent $root

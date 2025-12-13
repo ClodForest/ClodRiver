@@ -1,7 +1,6 @@
 # Relation extensions for ClodMUD
 # v0.0.0
 # First-class relations between entities
-# vim: ft=coffee
 
 object $relations
 parent $root

@@ -1,7 +1,6 @@
 # LLM integration extensions for ClodMUD
 # v0.0.0
 # Interface for LLM-based property inference
-# vim: ft=coffee
 
 object $llm_module
 parent $root

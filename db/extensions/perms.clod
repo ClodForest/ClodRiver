@@ -3,7 +3,6 @@
 # Simple ownership model
 # - $owned:           something that can be owned
 # - $ownership_group: a collection of owners (recursive membership)
-# vim: ft=coffee
 
 object $ownership
 parent $root

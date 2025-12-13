@@ -1,7 +1,6 @@
 # VR (Virtual Reality) extensions for ClodMUD
 # v0.0.0
 # Basic spatial model: rooms, exits, containers, movement
-# vim: ft=coffee
 
 object $vr
 parent $root

@@ -5,11 +5,11 @@ path    = require 'node:path'
 fs      = require 'node:fs'
 
 rootDir = path.resolve __dirname, '..'
-varDir  = path.join rootDir, 'var'
-runDir  = path.join varDir, 'run'
-logDir  = path.join varDir, 'log'
-pidFile = path.join runDir, 'clodriver.pid'
-logFile = path.join logDir, 'clodriver.log'
+varDir  = path.join    rootDir,   'var'
+runDir  = path.join    varDir,    'run'
+logDir  = path.join    varDir,    'log'
+pidFile = path.join    runDir,    'clodriver.pid'
+logFile = path.join    logDir,    'clodriver.log'
 
 fs.mkdirSync runDir, {recursive: true} unless fs.existsSync runDir
 fs.mkdirSync logDir, {recursive: true} unless fs.existsSync logDir
