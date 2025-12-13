@@ -1,0 +1,264 @@
+# Readline module for ClodMUD
+# v0.0.0
+# Command history, line editing, and tab completion
+
+object 0
+parent 1
+name sys
+
+method loaded
+  args module
+  vars module_interface
+
+  module_interface = module
+
+  module.exports.readline       = $readline
+  module.exports.create         = -> $readline.spawn()
+  module.exports.ANSI           = $ansi
+
+
+object 1
+name root
+
+default_parent $root
+
+method spawn
+  disallow overrides
+  using create
+
+  newObj = create @
+  newObj.init()
+  newObj
+
+method root_name
+  using toint
+  vars name
+
+  name ? '#' + toint(@)
+
+method init
+  disallow overrides
+  using list_methods
+
+  for p in @ancestors().reverse()
+    for methodName in list_methods(p)
+      if methodName.startsWith('init_')
+        method = p[methodName]
+        if method?.definer is p
+          @[methodName]()
+
+method ancestors
+  using parent
+
+  p = parent()
+  if p? and p._id?
+    [p, p.ancestors()...]
+  else
+    []
+
+
+object $ansi
+
+method clear_line
+  "\x1b[2K\r"
+
+method cursor_left
+  args n = 1
+  "\x1b[#{n}D"
+
+method cursor_right
+  args n = 1
+  "\x1b[#{n}C"
+
+method cursor_to_column
+  args col
+  "\x1b[#{col}G"
+
+method save_cursor
+  "\x1b[s"
+
+method restore_cursor
+  "\x1b[u"
+
+method erase_to_end
+  "\x1b[K"
+
+
+object $readline
+
+method init_readline
+  disallow overrides
+  vars history, history_index, max_history, line_buffer, cursor_pos, completer
+
+  history       ?= []
+  history_index ?= -1
+  max_history   ?= 100
+  line_buffer   ?= ''
+  cursor_pos    ?= 0
+  completer     ?= null
+
+method set_completer
+  vars completer
+  args fn
+
+  completer = fn
+
+method history
+  vars history
+
+  [history...]
+
+method add_to_history
+  vars history, max_history, history_index
+  args line
+
+  return unless line?.trim?()?.length > 0
+  return if history[0] is line
+
+  history.unshift line
+  history.pop() while history.length > max_history
+  history_index = -1
+
+method process_input
+  vars history, history_index, line_buffer, cursor_pos
+  args raw_input, emit_fn
+
+  i = 0
+  while i < raw_input.length
+    char = raw_input[i]
+    code = raw_input.charCodeAt(i)
+
+    if code is 0x1b and raw_input[i+1] is '['
+      seq = raw_input[i+2]
+      switch seq
+        when 'A' then @handle_up emit_fn
+        when 'B' then @handle_down emit_fn
+        when 'C' then @handle_right emit_fn
+        when 'D' then @handle_left emit_fn
+      i += 3
+      continue
+
+    if code is 0x09
+      @handle_tab emit_fn
+      i++
+      continue
+
+    if code is 0x7f or code is 0x08
+      @handle_backspace emit_fn
+      i++
+      continue
+
+    if code is 0x0d or code is 0x0a
+      line = line_buffer
+      @add_to_history line
+      line_buffer = ''
+      cursor_pos = 0
+      emit_fn '\n'
+      i++
+      return {type: 'line', value: line}
+
+    if code >= 32
+      line_buffer = line_buffer[...cursor_pos] + char + line_buffer[cursor_pos..]
+      cursor_pos++
+      @redraw_line emit_fn
+
+    i++
+
+  {type: 'pending'}
+
+method handle_up
+  vars history, history_index, line_buffer, cursor_pos
+  args emit_fn
+
+  return if history.length is 0
+  return if history_index >= history.length - 1
+
+  history_index++
+  line_buffer = history[history_index]
+  cursor_pos = line_buffer.length
+  @redraw_line emit_fn
+
+method handle_down
+  vars history, history_index, line_buffer, cursor_pos
+  args emit_fn
+
+  if history_index <= 0
+    history_index = -1
+    line_buffer = ''
+    cursor_pos = 0
+    @redraw_line emit_fn
+    return
+
+  history_index--
+  line_buffer = history[history_index]
+  cursor_pos = line_buffer.length
+  @redraw_line emit_fn
+
+method handle_left
+  vars cursor_pos
+  args emit_fn
+
+  return if cursor_pos <= 0
+  cursor_pos--
+  emit_fn $ansi.cursor_left()
+
+method handle_right
+  vars line_buffer, cursor_pos
+  args emit_fn
+
+  return if cursor_pos >= line_buffer.length
+  cursor_pos++
+  emit_fn $ansi.cursor_right()
+
+method handle_backspace
+  vars line_buffer, cursor_pos
+  args emit_fn
+
+  return if cursor_pos <= 0
+
+  line_buffer = line_buffer[...cursor_pos-1] + line_buffer[cursor_pos..]
+  cursor_pos--
+  @redraw_line emit_fn
+
+method handle_tab
+  vars line_buffer, cursor_pos, completer
+  args emit_fn
+
+  return unless completer?
+
+  completions = completer line_buffer, cursor_pos
+
+  return unless completions?.length > 0
+
+  if completions.length is 1
+    completion = completions[0]
+    line_buffer = completion
+    cursor_pos = completion.length
+    @redraw_line emit_fn
+  else
+    emit_fn "\n"
+    emit_fn completions.join("  ") + "\n"
+    @redraw_line emit_fn, true
+
+method redraw_line
+  vars line_buffer, cursor_pos
+  args emit_fn, show_prompt = false
+
+  output = $ansi.clear_line()
+  output += "> " if show_prompt
+  output += line_buffer
+  output += $ansi.cursor_to_column(cursor_pos + 1)
+
+  emit_fn output
+
+method current_line
+  vars line_buffer
+
+  line_buffer
+
+method reset
+  vars history_index, line_buffer, cursor_pos
+
+  history_index = -1
+  line_buffer   = ''
+  cursor_pos    = 0

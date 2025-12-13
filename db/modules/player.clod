@@ -1,0 +1,883 @@
+# Player module for ClodMUD
+# v0.0.0
+# User sessions, command processing, and shell
+
+object 0
+parent 1
+name sys
+
+method loaded
+  args module
+  vars module_interface
+
+  module_interface = module
+  $user._module = module
+
+  module.exports.user = $user
+  module.exports.command_processor = $command_processor
+  module.exports.shell = $shell
+  module.exports.create_user = -> $user.spawn()
+
+
+object 1
+name root
+
+default_parent $root
+
+method spawn
+  disallow overrides
+  using create
+
+  newObj = create @
+  newObj.init()
+  newObj
+
+method root_name
+  using toint
+  vars name
+
+  name ? '#' + toint(@)
+
+method init
+  disallow overrides
+  using list_methods
+
+  for p in @ancestors().reverse()
+    for methodName in list_methods(p)
+      if methodName.startsWith('init_')
+        method = p[methodName]
+        if method?.definer is p
+          @[methodName]()
+
+method ancestors
+  using parent
+
+  p = parent()
+  if p? and p._id?
+    [p, p.ancestors()...]
+  else
+    []
+
+
+object $user
+
+method init_user
+  disallow overrides
+  vars connection, character, preferences, session_start, readline, world_ops, server_ops, module_ops
+
+  connection    ?= null
+  character     ?= null
+  session_start ?= Date.now()
+  preferences   ?= @default_preferences()
+  readline      ?= null
+  world_ops     ?= null
+  server_ops    ?= null
+  module_ops    ?= null
+
+method default_preferences
+  verbosity:   'normal'
+  echo_input:  false
+  prompt:      '> '
+  color:       true
+
+method set_connection
+  vars connection
+  args conn
+
+  connection = conn
+
+method connection
+  vars connection
+
+  connection
+
+method set_character
+  vars character
+  args char
+
+  character = char
+
+method character
+  vars character
+
+  character
+
+method session_start
+  vars session_start
+
+  session_start
+
+method preferences
+  vars preferences
+
+  preferences
+
+method preference
+  vars preferences
+  args key
+
+  preferences[key]
+
+method set_preference
+  vars preferences
+  args key, value
+
+  preferences[key] = value
+
+method receive_line
+  vars connection
+  args line
+
+  cmd_proc = @_module.exports.command_processor
+  result = cmd_proc.process(@, line)
+  @notify result + "\n" if result?
+
+method notify
+  vars connection
+  args message
+
+  connection?.emit?(message)
+
+method prompt
+  vars preferences
+
+  @notify preferences.prompt
+
+method disconnect
+  vars connection
+
+  connection = null
+
+method set_readline
+  vars readline
+  args rl
+
+  readline = rl
+
+method set_world_ops
+  vars world_ops
+  args ops
+
+  world_ops = ops
+
+method world_ops
+  vars world_ops
+
+  world_ops
+
+method set_server_ops
+  vars server_ops
+  args ops
+
+  server_ops = ops
+
+method server_ops
+  vars server_ops
+
+  server_ops
+
+method set_module_ops
+  vars module_ops
+  args ops
+
+  module_ops = ops
+
+method module_ops
+  vars module_ops
+
+  module_ops
+
+method receive_data
+  vars connection, readline
+  args data
+
+  unless readline?
+    return
+
+  emit_fn = (output) => connection?.emit?(output)
+
+  result = readline.process_input data, emit_fn
+
+  if result?.type is 'line'
+    @receive_line result.value
+    @prompt()
+
+
+object $command_processor
+
+method process
+  args user, line
+  vars aliases
+
+  aliases ?= @default_aliases()
+
+  trimmed = line.replace /^\s+/, ''
+
+  return @handle_empty(user) if trimmed is ''
+
+  first = trimmed[0]
+
+  switch first
+    when '/' then @handle_slash  user, trimmed[1..]
+    when '@' then @handle_at     user, trimmed[1..]
+    when ';' then @handle_eval   user, trimmed[1..]
+    else          @handle_input  user, trimmed
+
+method default_aliases
+  '"':  (text) -> "say #{text}"
+  ':':  (text) -> "emote #{text}"
+  "'":  (text) -> "say #{text}"
+
+method handle_empty
+  args user
+
+  user.prompt()
+  null
+
+method handle_slash
+  args user, cmd
+
+  shell = user._module.exports.shell
+  shell.execute user, cmd
+
+method handle_at
+  args user, cmd
+
+  shell = user._module.exports.shell
+  shell.execute user, '@' + cmd
+
+method handle_eval
+  using clod_eval
+  args user, code
+
+  try
+    "=> " + clod_eval code
+  catch e
+    e.stack
+
+method handle_input
+  vars aliases
+  args user, input
+
+  first = input[0]
+
+  if aliases[first]?
+    expanded = aliases[first] input[1..]
+    return @process user, expanded
+
+  @interpret user, input
+
+method interpret
+  args user, input
+
+  "I don't understand \"#{input}\" yet."
+
+method add_alias
+  vars aliases
+  args char, transformer
+
+  aliases ?= @default_aliases()
+  aliases[char] = transformer
+
+
+object $shell
+
+method execute
+  args user, cmd
+
+  parts   = cmd.split /\s+/
+  cmdName = parts[0]
+  cmdArgs = parts[1..]
+
+  if cmdName.startsWith '@'
+    return @handle_program user, cmdName[1..], cmdArgs
+
+  groups = @command_groups()
+
+  if groups[cmdName]?
+    group = groups[cmdName]
+    subCmd = cmdArgs[0] ? group.default
+    subArgs = cmdArgs[1..]
+
+    if subCmd is 'help' or not subCmd?
+      return @group_help cmdName, group
+
+    if group.commands[subCmd]?
+      return group.commands[subCmd].handler user, subArgs
+
+    return "Unknown subcommand: /#{cmdName} #{subCmd}\nType /#{cmdName} help for available commands."
+
+  simple = @simple_commands()
+
+  if simple[cmdName]?
+    return simple[cmdName].handler user, cmdArgs
+
+  if cmdName is 'help' or cmdName is ''
+    return @cmd_help user, cmdArgs
+
+  "Unknown command: /#{cmdName}\nType /help for available commands."
+
+method group_help
+  args groupName, group
+
+  lines = ["#{group.description}", ""]
+
+  for name, cmd of group.commands
+    default_marker = if name is group.default then ' (default)' else ''
+    lines.push "  /#{groupName} #{name.padEnd 12}#{default_marker} - #{cmd.help}"
+
+  lines.join "\n"
+
+method simple_commands
+  help:
+    help:    'Show this help'
+    handler: (user, args) => @cmd_help user, args
+  look:
+    help:    'Look around'
+    handler: (user, args) => @cmd_look user, args
+  quit:
+    help:    'Disconnect'
+    handler: (user, args) => @cmd_quit user, args
+  whoami:
+    help:    'Show your user info'
+    handler: (user, args) => @cmd_whoami user, args
+  eval:
+    help:    'Evaluate CoffeeScript code'
+    handler: (user, args) => @cmd_eval user, args
+
+method command_groups
+  world:
+    description: 'World management commands'
+    default:     'status'
+    commands:
+      status:
+        help:    'Show world status'
+        handler: (user, args) => @world_status user, args
+      dump:
+        help:    'Dump world to JSON'
+        handler: (user, args) => @world_dump user, args
+      name:
+        help:    'Set world name for saves'
+        handler: (user, args) => @world_name user, args
+      save:
+        help:    'Save world to file'
+        handler: (user, args) => @world_save user, args
+      load:
+        help:    'Load world from file'
+        handler: (user, args) => @world_load user, args
+      changes:
+        help:    'List unsaved changes'
+        handler: (user, args) => @world_changes user, args
+
+  server:
+    description: 'Server management commands'
+    default:     'status'
+    commands:
+      status:
+        help:    'Show server status'
+        handler: (user, args) => @server_status user, args
+      halt:
+        help:    'Shut down the server'
+        handler: (user, args) => @server_halt user, args
+
+  module:
+    description: 'Module management commands'
+    default:     'status'
+    commands:
+      status:
+        help:    'Show module system status'
+        handler: (user, args) => @module_status user, args
+      loaded:
+        help:    'List loaded modules'
+        handler: (user, args) => @module_loaded user, args
+      available:
+        help:    'List available modules'
+        handler: (user, args) => @module_available user, args
+      load:
+        help:    'Load a module'
+        handler: (user, args) => @module_load user, args
+      unload:
+        help:    'Unload a module'
+        handler: (user, args) => @module_unload user, args
+      upgrade:
+        help:    'Reload a module'
+        handler: (user, args) => @module_upgrade user, args
+
+  prefs:
+    description: 'User preferences'
+    default:     'list'
+    commands:
+      list:
+        help:    'List all preferences'
+        handler: (user, args) => @prefs_list user, args
+      get:
+        help:    'Get a preference value'
+        handler: (user, args) => @prefs_get user, args
+      set:
+        help:    'Set a preference'
+        handler: (user, args) => @prefs_set user, args
+      reset:
+        help:    'Reset to default'
+        handler: (user, args) => @prefs_reset user, args
+
+  mode:
+    description: 'Shell mode selection'
+    default:     'list'
+    commands:
+      list:
+        help:    'List available modes'
+        handler: (user, args) => @mode_list user, args
+      set:
+        help:    'Set current mode'
+        handler: (user, args) => @mode_set user, args
+
+method cmd_help
+  args user, cmdArgs
+
+  groups = @command_groups()
+  simple = @simple_commands()
+
+  lines = ["Available commands:", ""]
+
+  lines.push "Simple commands:"
+  for name, cmd of simple
+    lines.push "  /#{name.padEnd 12} - #{cmd.help}"
+
+  lines.push ""
+  lines.push "Command groups (type /<group> help for details):"
+  for name, group of groups
+    lines.push "  /#{name.padEnd 12} - #{group.description}"
+
+  lines.push ""
+  lines.push "Programming:"
+  lines.push "  @program <obj.method> - Edit a method (not yet implemented)"
+  lines.push ""
+  lines.push "Aliases:"
+  lines.push "  \"text  - Say something"
+  lines.push "  :text  - Emote"
+  lines.push "  ;expr  - Evaluate expression"
+
+  lines.join "\n"
+
+method cmd_look
+  args user, cmdArgs
+
+  char = user.character()
+
+  unless char?
+    return "You don't have a character yet."
+
+  location = char.location?()
+
+  unless location?
+    return "You are nowhere."
+
+  location.look?(char) ? location.description?() ? "You see nothing special."
+
+method cmd_quit
+  args user, cmdArgs
+
+  user.notify "Goodbye!\n"
+  user.disconnect()
+  null
+
+method cmd_whoami
+  using toint
+  args user, cmdArgs
+
+  char = user.character()
+  charInfo = if char? then char.root_name() else "(no character)"
+
+  """
+  User: ##{toint user}
+  Character: #{charInfo}
+  Session started: #{new Date(user.session_start?() ? Date.now()).toISOString()}
+  """
+
+method cmd_eval
+  using clod_eval
+  args user, cmdArgs
+
+  code = cmdArgs.join ' '
+
+  try
+    "=> " + clod_eval code
+  catch e
+    e.stack
+
+method world_status
+  args user, cmdArgs
+
+  ops = user.world_ops()
+
+  unless ops?
+    return "World operations not available."
+
+  world = ops.get_world()
+
+  unless world?
+    return "No world exists yet."
+
+  rooms     = world.rooms()
+  start     = world.start_room()
+  worldName = ops.get_world_name?() ? '(unnamed)'
+
+  lines = [
+    "World: #{worldName}"
+    "  Rooms: #{rooms.length}"
+    "  Start: #{start?.short_description() ? 'none'}"
+  ]
+
+  lines.join "\n"
+
+method world_dump
+  args user, cmdArgs
+
+  ops = user.world_ops()
+
+  unless ops?
+    return "World operations not available."
+
+  json = ops.dump_world()
+
+  unless json?
+    return "No world to dump."
+
+  json
+
+method world_name
+  args user, cmdArgs
+
+  ops = user.world_ops()
+
+  unless ops?
+    return "World operations not available."
+
+  if cmdArgs.length is 0
+    name = ops.get_world_name?() ? '(unnamed)'
+    return "World name: #{name}"
+
+  name = cmdArgs[0]
+
+  unless name.match /^[a-zA-Z0-9_-]+$/
+    return "Invalid name: #{name} (use alphanumeric, underscore, dash)"
+
+  ops.set_world_name name
+  "World name set to: #{name}"
+
+method world_save
+  args user, cmdArgs
+
+  ops = user.world_ops()
+
+  unless ops?
+    return "World operations not available."
+
+  name = ops.get_world_name?()
+
+  unless name?
+    return "No world name set. Use /world name <name> first."
+
+  path = "db/worlds/#{name}.json"
+  json = ops.dump_world()
+
+  unless json?
+    return "No world to save."
+
+  result = ops.write_file path, json
+  ops.mark_saved?()
+
+  if result?
+    "World saved to: #{result}"
+  else
+    "Failed to save world."
+
+method world_load
+  args user, cmdArgs
+
+  ops = user.world_ops()
+
+  unless ops?
+    return "World operations not available."
+
+  name = ops.get_world_name?()
+
+  unless name?
+    return "No world name set. Use /world name <name> first."
+
+  path = "db/worlds/#{name}.json"
+  json = ops.read_file path
+
+  unless json?
+    return "World file not found: #{path}"
+
+  try
+    ops.load_world json
+    ops.mark_saved?()
+    "World loaded from: #{path}"
+  catch e
+    "Failed to load world: #{e.message}"
+
+method world_changes
+  args user, cmdArgs
+
+  ops = user.world_ops()
+
+  unless ops?
+    return "World operations not available."
+
+  changes = ops.get_changes?()
+
+  unless changes? and changes.length > 0
+    return "No unsaved changes."
+
+  lines = ["Unsaved changes:"]
+  for change in changes
+    lines.push "  #{change}"
+
+  lines.join "\n"
+
+method server_status
+  args user, cmdArgs
+
+  ops = user.server_ops?()
+
+  uptime = process?.uptime?() ? 0
+  hours   = Math.floor uptime / 3600
+  minutes = Math.floor (uptime % 3600) / 60
+  seconds = Math.floor uptime % 60
+
+  """
+  Server Status:
+    Uptime: #{hours}h #{minutes}m #{seconds}s
+    Platform: #{process?.platform ? 'unknown'}
+    Node: #{process?.version ? 'unknown'}
+  """
+
+method server_halt
+  args user, cmdArgs
+
+  ops = user.server_ops?()
+
+  unless ops?.shutdown?
+    return "Server shutdown not available."
+
+  user.notify "Shutting down server...\n"
+  ops.shutdown()
+  null
+
+method module_status
+  args user, cmdArgs
+
+  ops = user.module_ops?()
+
+  unless ops?
+    return "Module operations not available."
+
+  loaded = ops.list_loaded?() ? []
+
+  """
+  Module System Status:
+    Loaded modules: #{loaded.length}
+    Module path: db/modules/
+  """
+
+method module_loaded
+  args user, cmdArgs
+
+  ops = user.module_ops?()
+
+  unless ops?
+    return "Module operations not available."
+
+  loaded = ops.list_loaded?() ? []
+
+  if loaded.length is 0
+    return "No modules loaded."
+
+  lines = ["Loaded modules:"]
+  for name in loaded
+    lines.push "  #{name}"
+
+  lines.join "\n"
+
+method module_available
+  args user, cmdArgs
+
+  ops = user.module_ops?()
+
+  unless ops?
+    return "Module operations not available."
+
+  path = cmdArgs[0] ? '.'
+  available = ops.list_available?(path) ? []
+
+  if available.length is 0
+    return "No modules found in: db/modules/#{path}"
+
+  lines = ["Available modules in db/modules/#{path}:"]
+  for name in available
+    lines.push "  #{name}"
+
+  lines.join "\n"
+
+method module_load
+  args user, cmdArgs
+
+  ops = user.module_ops?()
+
+  unless ops?
+    return "Module operations not available."
+
+  if cmdArgs.length is 0
+    return "Usage: /module load <path>"
+
+  path = cmdArgs[0]
+  result = ops.load_module?(path)
+
+  if result?.error?
+    return "Failed to load module: #{result.error}"
+
+  "Module loaded: #{path}"
+
+method module_unload
+  args user, cmdArgs
+
+  ops = user.module_ops?()
+
+  unless ops?
+    return "Module operations not available."
+
+  if cmdArgs.length is 0
+    return "Usage: /module unload <name>"
+
+  name = cmdArgs[0]
+  result = ops.unload_module?(name)
+
+  if result?.error?
+    return "Failed to unload module: #{result.error}"
+
+  "Module unloaded: #{name}"
+
+method module_upgrade
+  args user, cmdArgs
+
+  ops = user.module_ops?()
+
+  unless ops?
+    return "Module operations not available."
+
+  if cmdArgs.length is 0
+    return "Usage: /module upgrade <name>"
+
+  name = cmdArgs[0]
+  result = ops.upgrade_module?(name)
+
+  if result?.error?
+    return "Failed to upgrade module: #{result.error}"
+
+  "Module upgraded: #{name}"
+
+method prefs_list
+  args user, cmdArgs
+
+  defaults = user.default_preferences?() ? {}
+  prefs    = user.preferences?() ? {}
+
+  maxLen = Math.max (Object.keys(defaults).map (k) -> k.length)...
+
+  lines = []
+  for key, defaultVal of defaults
+    currentVal = prefs[key] ? defaultVal
+    changed    = if prefs[key]? and prefs[key] isnt defaultVal then ' *' else ''
+    lines.push "  #{key.padEnd maxLen}: #{currentVal}#{changed}"
+
+  lines.join "\n"
+
+method prefs_get
+  args user, cmdArgs
+
+  if cmdArgs.length is 0
+    return "Usage: /prefs get <key>"
+
+  key   = cmdArgs[0]
+  value = user.preference key
+
+  if value?
+    "#{key}: #{value}"
+  else
+    "#{key}: (not set)"
+
+method prefs_set
+  args user, cmdArgs
+
+  if cmdArgs.length < 2
+    return "Usage: /prefs set <key> <value>"
+
+  key   = cmdArgs[0]
+  value = cmdArgs[1..].join ' '
+
+  if value is 'true'
+    value = true
+  else if value is 'false'
+    value = false
+  else if value.match /^\d+$/
+    value = parseInt value
+
+  user.set_preference key, value
+  "#{key}: #{value}"
+
+method prefs_reset
+  args user, cmdArgs
+
+  if cmdArgs.length is 0
+    return "Usage: /prefs reset <key>"
+
+  key      = cmdArgs[0]
+  defaults = user.default_preferences?() ? {}
+
+  unless defaults[key]?
+    return "Unknown preference: #{key}"
+
+  user.set_preference key, defaults[key]
+  "#{key}: #{defaults[key]} (reset to default)"
+
+method mode_list
+  args user, cmdArgs
+
+  modes = @available_modes()
+
+  lines = ["Available modes:"]
+  for name, mode of modes
+    lines.push "  #{name.padEnd 12} - #{mode.description}"
+
+  lines.join "\n"
+
+method mode_set
+  args user, cmdArgs
+
+  if cmdArgs.length is 0
+    return "Usage: /mode set <name>"
+
+  name  = cmdArgs[0]
+  modes = @available_modes()
+
+  unless modes[name]?
+    return "Unknown mode: #{name}"
+
+  user.set_preference 'mode', name
+  "Mode set to: #{name}"
+
+method available_modes
+  normal:
+    description: 'Standard interactive mode'
+  builder:
+    description: 'World building mode (expanded room editing)'
+  programmer:
+    description: 'Programming mode (expanded eval and object editing)'
+
+method handle_program
+  args user, target, cmdArgs
+
+  "Programming mode not yet implemented for: #{target}"
+

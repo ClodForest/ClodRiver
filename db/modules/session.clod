@@ -1,0 +1,215 @@
+# Session management module for ClodMUD
+# v0.0.0
+
+object 0
+parent 1
+name sys
+
+method loaded
+  args module
+  vars module_interface
+
+  module_interface = module
+
+  module.exports.session_manager  = $session_manager
+  module.exports.set_readline     = (rl) -> $session_manager.set_readline rl
+  module.exports.set_shutdown     = (fn) -> $session_manager.set_shutdown fn
+  module.exports.set_module_loader = (loader) -> $session_manager.set_module_loader loader
+  module.exports.bootstrap_world  = (world) -> $session_manager.bootstrap_world world
+  module.exports.on_connect       = (conn, player) -> $session_manager.on_connect conn, player
+  module.exports.on_line          = (conn, line) -> $session_manager.on_line conn, line
+  module.exports.on_data          = (conn, data) -> $session_manager.on_data conn, data
+  module.exports.on_disconnect    = (conn) -> $session_manager.on_disconnect conn
+
+
+object 1
+name root
+
+default_parent $root
+
+method spawn
+  disallow overrides
+  using create
+
+  newObj = create @
+  newObj.init()
+  newObj
+
+method root_name
+  using toint
+  vars name
+
+  name ? '#' + toint(@)
+
+method init
+  disallow overrides
+  using list_methods
+
+  for p in @ancestors().reverse()
+    for methodName in list_methods(p)
+      if methodName.startsWith('init_')
+        method = p[methodName]
+        if method?.definer is p
+          @[methodName]()
+
+method ancestors
+  using parent
+
+  p = parent()
+  if p? and p._id?
+    [p, p.ancestors()...]
+  else
+    []
+
+
+object $session_manager
+
+method init_session_manager
+  disallow overrides
+  vars sessions, world_module, start_room, readline_module, use_readline, world_name, world_changes, server_shutdown, module_loader
+
+  sessions        ?= {}
+  world_module    ?= null
+  start_room      ?= null
+  readline_module ?= null
+  use_readline    ?= false
+  world_name      ?= null
+  world_changes   ?= []
+  server_shutdown ?= null
+  module_loader   ?= null
+
+method set_readline
+  vars readline_module
+  args rl_module
+
+  readline_module = rl_module
+
+method set_shutdown
+  vars server_shutdown
+  args fn
+
+  server_shutdown = fn
+
+method set_module_loader
+  vars module_loader
+  args loader
+
+  module_loader = loader
+
+method bootstrap_world
+  vars sessions, world_module, start_room
+  args world
+
+  sessions     ?= {}
+  world_module = world
+
+  exportsObj = world.exports()
+
+  theWorld = exportsObj.create_world()
+
+  start_room = exportsObj.create_room()
+  start_room.set_short_description "The Void"
+  start_room.set_description """
+    You float in an endless void. The darkness stretches infinitely in all
+    directions, yet you can see yourself clearly, as if lit by some unseen
+    source. This is the beginning - or perhaps the end - of all things.
+
+    A faint shimmer in the distance suggests there may be more to discover.
+  """
+
+  theWorld.set_start_room start_room
+  theWorld.add_room start_room
+
+method on_connect
+  using toint, write_file, read_file, file_exists
+  vars sessions, world_module, start_room, readline_module, use_readline, world_name, world_changes, server_shutdown, module_loader
+  args conn, player_module
+
+  player_exports = player_module.exports()
+  world_exports  = world_module.exports()
+
+  user = player_exports.create_user()
+  user.set_connection conn
+
+  char = world_exports.create_character()
+  char.set_short_description "a shadowy figure"
+  char.move_to start_room
+  user.set_character char
+
+  if use_readline and readline_module?
+    rl = readline_module.exports().create()
+    user.set_readline rl
+    conn.enable_char_mode()
+
+  world_ops =
+    get_world:      -> world_exports.get_world()
+    dump_world:     -> world_exports.dump_world()
+    load_world:     (json) -> world_exports.load_world json
+    get_world_name: -> world_name
+    set_world_name: (name) -> world_name = name
+    get_changes:    -> world_changes
+    mark_saved:     -> world_changes = []
+    add_change:     (desc) -> world_changes.push desc
+    write_file:     (path, content) -> write_file null, path, content
+    read_file:      (path) -> read_file null, path
+    file_exists:    (path) -> file_exists null, path
+
+  server_ops =
+    shutdown: -> server_shutdown?()
+
+  module_ops =
+    list_loaded:    -> module_loader?.list_loaded?() ? []
+    list_available: (path) -> module_loader?.list_available?(path) ? []
+    load_module:    (path) -> module_loader?.load_module?(path)
+    unload_module:  (name) -> module_loader?.unload_module?(name)
+    upgrade_module: (name) -> module_loader?.upgrade_module?(name)
+
+  user.set_world_ops world_ops
+  user.set_server_ops server_ops
+  user.set_module_ops module_ops
+
+  sessions[toint conn] = user
+
+  user.notify "\n"
+  user.notify "Welcome to ClodMUD.\n"
+  user.notify "Type /help for available commands.\n"
+  user.notify "\n"
+  user.notify start_room.look(char) + "\n"
+  user.prompt()
+
+method on_line
+  using toint
+  vars sessions
+  args conn, line
+
+  user = sessions[toint conn]
+
+  unless user?
+    return
+
+  user.receive_line line
+
+method on_data
+  using toint
+  vars sessions
+  args conn, data
+
+  user = sessions[toint conn]
+
+  unless user?
+    return
+
+  user.receive_data data
+
+method on_disconnect
+  using toint
+  vars sessions
+  args conn
+
+  user = sessions[toint conn]
+
+  if user?
+    char = user.character()
+    char.move_to null if char?
+    delete sessions[toint conn]
+

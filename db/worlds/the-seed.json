@@ -1,0 +1,14 @@
+{
+  "start_room": 10,
+  "rooms": [
+    {
+      "id": 10,
+      "short": "The Void",
+      "description": "You float in an endless void. The darkness stretches infinitely in all\ndirections, yet you can see yourself clearly, as if lit by some unseen\nsource. This is the beginning - or perhaps the end - of all things.\nA faint shimmer in the distance suggests there may be more to discover.",
+      "exits": {},
+      "contents": [
+        12
+      ]
+    }
+  ]
+}

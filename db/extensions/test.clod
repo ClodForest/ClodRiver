@@ -83,7 +83,7 @@ method summarize
   {total, passed, failed}
 
 
-# Example test
+# Test framework self-tests
 object $test_testing
 parent $test
 
@@ -92,4 +92,83 @@ method test_assert_true_passes
 
 method test_assert_eq_passes
   @assert_eq 1 + 1, 2
+
+
+# Tests for $root object methods
+object $test_root
+parent $test
+
+method test_spawn_creates_child
+  using $root
+
+  child = $root.spawn()
+  @assert_true child?
+  @assert_true child._id?
+
+method test_spawn_inherits_from_parent
+  using $root, toint
+
+  child = $root.spawn()
+  ancestors = child.ancestors()
+  @assert_true ancestors.length > 0
+  @assert_eq toint(ancestors[0]), toint($root)
+
+method test_ancestors_returns_array
+  using $root
+
+  ancestors = $root.ancestors()
+  @assert_true Array.isArray(ancestors)
+
+method test_root_name_returns_string
+  using $root
+
+  name = $root.root_name()
+  @assert_true typeof name is 'string'
+
+method test_root_name_set_and_get
+  using $sys, $root
+
+  obj = $sys.create($root)
+  obj.root_name('test_obj')
+  @assert_eq obj.root_name(), 'test_obj'
+
+method test_list_methods_returns_array
+  using $root
+
+  methods = $root.list_methods()
+  @assert_true Array.isArray(methods)
+  @assert_true 'spawn' in methods
+  @assert_true 'ancestors' in methods
+
+
+# Tests for $sys object methods
+object $test_sys
+parent $test
+
+method test_create_returns_object
+  using $sys, $root
+
+  obj = $sys.create($root)
+  @assert_true obj?
+  @assert_true obj._id?
+
+method test_create_sets_parent
+  using $sys, $root, toint
+
+  obj = $sys.create($root)
+  ancestors = obj.ancestors()
+  @assert_eq toint(ancestors[0]), toint($root)
+
+method test_add_obj_name_and_del_obj_name
+  using $sys, $root, toobj
+
+  obj = $sys.create($root)
+  $sys.add_obj_name('test_obj_name', obj)
+
+  found = toobj('$test_obj_name')
+  @assert_true found?
+
+  $sys.del_obj_name('test_obj_name')
+  not_found = toobj('$test_obj_name')
+  @assert_false not_found?
 

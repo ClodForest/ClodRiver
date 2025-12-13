@@ -173,6 +173,56 @@ class BIFs
 
     fullPath
 
+  write_file: (ctx, relativePath, content) =>
+    fs   = require 'node:fs'
+    path = require 'node:path'
+
+    fullPath = path.join process.cwd(), relativePath
+    dirPath  = path.dirname fullPath
+
+    fs.mkdirSync dirPath, {recursive: true} unless fs.existsSync dirPath
+    fs.writeFileSync fullPath, content, 'utf8'
+
+    fullPath
+
+  read_file: (ctx, relativePath) =>
+    fs   = require 'node:fs'
+    path = require 'node:path'
+
+    fullPath = path.join process.cwd(), relativePath
+
+    unless fs.existsSync fullPath
+      return null
+
+    fs.readFileSync fullPath, 'utf8'
+
+  file_exists: (ctx, relativePath) =>
+    fs   = require 'node:fs'
+    path = require 'node:path'
+
+    fullPath = path.join process.cwd(), relativePath
+    fs.existsSync fullPath
+
+  list_dir: (ctx, relativePath) =>
+    fs   = require 'node:fs'
+    path = require 'node:path'
+
+    fullPath = path.join process.cwd(), relativePath
+
+    unless fs.existsSync fullPath
+      return []
+
+    entries = fs.readdirSync fullPath, {withFileTypes: true}
+    results = []
+
+    for entry in entries
+      if entry.isDirectory()
+        results.push {name: entry.name, type: 'dir'}
+      else
+        results.push {name: entry.name, type: 'file'}
+
+    results
+
   # Network
   listen: (ctx, listener, options) =>
     # Enforce $sys-only
@@ -289,7 +339,7 @@ class BIFs
       'children', 'parent',
       'add_method', 'rm_method', 'lookup_method', 'list_methods',
       'compile', 'clod_eval',
-      'textdump',
+      'textdump', 'write_file', 'read_file', 'file_exists', 'list_dir',
       'listen', 'accept', 'emit', 'emit_error', 'attach_stdio',
       'require', 'load_core', 'core_toobj', 'core_call', 'core_destroy'
     ]

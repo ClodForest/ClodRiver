@@ -1,0 +1,116 @@
+# Admin module for ClodMUD
+# v0.0.0
+# Direct admin console access (bypasses player/session)
+
+object 0
+parent 1
+name sys
+
+method loaded
+  args module
+  vars module_interface
+
+  module_interface = module
+
+  module.exports.admin = $admin
+  module.exports.set_connection = (conn) -> $admin.set_connection conn
+
+
+object 1
+name root
+
+default_parent $root
+
+method spawn
+  disallow overrides
+  using create
+
+  newObj = create @
+  newObj.init()
+  newObj
+
+method root_name
+  using toint
+  vars name
+
+  name ? '#' + toint(@)
+
+method init
+  disallow overrides
+  using list_methods
+
+  for p in @ancestors().reverse()
+    for methodName in list_methods(p)
+      if methodName.startsWith('init_')
+        method = p[methodName]
+        if method?.definer is p
+          @[methodName]()
+
+method ancestors
+  using parent
+
+  p = parent()
+  if p? and p._id?
+    [p, p.ancestors()...]
+  else
+    []
+
+
+object $admin
+
+method set_connection
+  args conn
+  vars connection
+
+  connection = conn
+
+method receive_line
+  using clod_eval, tostr
+  vars connection
+  args s
+
+  s.replace /^\s*/, ''
+
+  switch s[0]
+    when undefined then result = "Yeah, I'm here."
+    when ';'       then result = @cmd_eval s[1..]
+    when '@'       then result = @do_cmd   s[1..]
+
+    else
+      result = "huh?"
+
+  @notify result + "\n\n"
+
+method do_cmd
+  args s
+
+  for command in @list_commands()
+    if s.startsWith "cmd_" + command
+      return @[command] s
+
+  return "I don't know what that means."
+
+method cmd_eval
+  using clod_eval
+  args s
+
+  try
+    "=> " + clod_eval s
+  catch e
+    e.stack
+
+method list_commands
+  @list_methods()
+    .filter (methodName) -> methodName.startsWith 'cmd_'
+    .map    (methodName) -> methodName[4..]
+
+method cmd_shutdown
+  using $sys
+
+  $sys.shutdown()
+
+method notify
+  args s
+  vars connection
+
+  connection.emit(s)

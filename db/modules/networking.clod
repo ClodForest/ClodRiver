@@ -13,10 +13,10 @@ method loaded
   module_interface = module
 
   # Store module interface on $connection for emit_event to access via prototype chain
-  # This is JS property access, but uses the controlled module interface rather than raw holder
   $connection._module = module
 
   module.exports.connection = $connection
+  module.exports.TELNET     = $telnet
 
 
 object 1
@@ -28,7 +28,9 @@ method spawn
   disallow overrides
   using create
 
-  create @
+  newObj = create @
+  newObj.init?()
+  newObj
 
 method root_name
   using toint
@@ -36,32 +38,133 @@ method root_name
 
   name ? '#' + toint(@)
 
+method init
+  disallow overrides
+  using list_methods
+
+  for p in @ancestors().reverse()
+    for methodName in list_methods(p)
+      if methodName.startsWith('init_')
+        method = p[methodName]
+        if method?.definer is p
+          @[methodName]()
+
+method ancestors
+  using parent
+
+  p = parent()
+  if p? and p._id?
+    [p, p.ancestors()...]
+  else
+    []
+
+
+object $telnet
+
+method IAC
+  255
+
+method WILL
+  251
+
+method WONT
+  252
+
+method DO
+  253
+
+method DONT
+  254
+
+method ECHO
+  1
+
+method SGA
+  3
+
+method LINEMODE
+  34
+
+method char_mode_sequence
+  Buffer.from [
+    @IAC(), @WILL(), @ECHO()
+    @IAC(), @WILL(), @SGA()
+    @IAC(), @WONT(), @LINEMODE()
+  ]
+
+method line_mode_sequence
+  Buffer.from [
+    @IAC(), @WONT(), @ECHO()
+    @IAC(), @WONT(), @SGA()
+  ]
+
 
 object $connection
+
+method init_connection
+  vars buf, char_mode
+
+  buf       ?= Buffer.from ''
+  char_mode ?= false
 
 method connected
   using accept, parent
   args socketInfo
 
   if socketInfo
-    # Use parent() to get our prototype ($connection) instead of $connection reference
-    # This avoids cross-core object resolution issues
     connection = parent().spawn()
     accept connection
   else
     @emit_event 'connected'
 
+method enable_char_mode
+  vars char_mode
+
+  char_mode = true
+  @emit $telnet.char_mode_sequence()
+
+method disable_char_mode
+  vars char_mode
+
+  char_mode = false
+  @emit $telnet.line_mode_sequence()
+
+method is_char_mode
+  vars char_mode
+
+  char_mode ? false
+
 method received
   args incomingBuf
-  vars buf
+  vars buf, char_mode
 
   buf ?= Buffer.from ''
-  currentBuf = Buffer.concat [buf, incomingBuf]
-  lines = currentBuf.toString().split /\r?\n/
-  buf = Buffer.from lines[lines.length - 1]
+  char_mode ?= false
 
-  for line in lines[...-1]
-    @emit_event 'line', line
+  filtered = @filter_telnet_commands incomingBuf
+
+  if char_mode
+    @emit_event 'data', filtered.toString()
+  else
+    currentBuf = Buffer.concat [buf, filtered]
+    lines = currentBuf.toString().split /\r?\n/
+    buf = Buffer.from lines[lines.length - 1]
+
+    for line in lines[...-1]
+      @emit_event 'line', line
+
+method filter_telnet_commands
+  args buf
+
+  result = []
+  i = 0
+  while i < buf.length
+    if buf[i] is 255 and i + 2 < buf.length
+      i += 3
+    else
+      result.push buf[i]
+      i++
+  Buffer.from result
 
 method emit
   using emit
@@ -75,7 +178,5 @@ method disconnected
 method emit_event
   args event_name, data
 
-  # Access module interface via prototype chain (_module is on $connection, inherited by spawned connections)
-  # Uses module.emit() which invokes the lambda callback into parent core
   @_module?.emit?(event_name, @, data)
 

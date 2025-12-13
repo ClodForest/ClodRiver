@@ -1,0 +1,372 @@
+# World module for ClodMUD
+# v0.0.0
+# Spatial model: rooms, things, characters
+
+object 0
+parent 1
+name sys
+
+method loaded
+  args module
+  vars module_interface
+
+  module_interface = module
+
+  module.exports.room      = $room
+  module.exports.thing     = $thing
+  module.exports.character = $character
+  module.exports.world     = $world
+
+  theWorld = null
+
+  module.exports.create_world = ->
+    theWorld = $world.spawn()
+    theWorld
+
+  module.exports.create_room      = -> $room.spawn()
+  module.exports.create_character = -> $character.spawn()
+  module.exports.get_world        = -> theWorld
+  module.exports.dump_world       = -> theWorld?.dump()
+  module.exports.load_world       = (json) -> theWorld?.load json
+
+
+object 1
+name root
+
+default_parent $root
+
+method spawn
+  disallow overrides
+  using create
+
+  newObj = create @
+  newObj.init()
+  newObj
+
+method root_name
+  using toint
+  vars name
+
+  name ? '#' + toint(@)
+
+method init
+  disallow overrides
+  using list_methods
+
+  for p in @ancestors().reverse()
+    for methodName in list_methods(p)
+      if methodName.startsWith('init_')
+        method = p[methodName]
+        if method?.definer is p
+          @[methodName]()
+
+method ancestors
+  using parent
+
+  p = parent()
+  if p? and p._id?
+    [p, p.ancestors()...]
+  else
+    []
+
+
+object $described
+
+method description
+  vars description
+
+  description ? "You see nothing special."
+
+method set_description
+  vars description
+  args text
+
+  description = text
+
+method short_description
+  vars short_description
+
+  short_description ? @root_name()
+
+method set_short_description
+  vars short_description
+  args text
+
+  short_description = text
+
+
+object $container
+
+method init_container
+  disallow overrides
+  vars contents
+
+  contents ?= []
+
+method contents
+  vars contents
+
+  [contents...]
+
+method add_content
+  vars contents
+  args item
+
+  contents = [contents..., item] unless item in contents
+
+method remove_content
+  vars contents
+  args item
+
+  contents = contents.filter (i) -> i isnt item
+
+
+object $contained
+
+method init_contained
+  vars location
+
+  location ?= null
+
+method location
+  vars location
+
+  location
+
+method move_to
+  vars location
+  args destination
+
+  location.remove_content(@) if location?
+  destination.add_content(@) if destination?
+  location = destination
+
+
+object $room
+parent $described
+
+method init_room
+  disallow overrides
+  vars contents, exits
+
+  contents ?= []
+  exits    ?= {}
+
+method contents
+  vars contents
+
+  [contents...]
+
+method add_content
+  vars contents
+  args item
+
+  contents = [contents..., item] unless item in contents
+
+method remove_content
+  vars contents
+  args item
+
+  contents = contents.filter (i) -> i isnt item
+
+method exits
+  vars exits
+
+  exits
+
+method add_exit
+  vars exits
+  args direction, destination
+
+  exits[direction] = destination
+
+method find_exit
+  vars exits
+  args direction
+
+  exits[direction]
+
+method look
+  vars contents, exits
+  args viewer
+
+  lines = [@description()]
+
+  others = contents.filter (c) -> c isnt viewer
+  if others.length > 0
+    lines.push ""
+    lines.push "You see:"
+    for item in others
+      lines.push "  #{item.short_description()}"
+
+  exitDirs = Object.keys exits
+  if exitDirs.length > 0
+    lines.push ""
+    lines.push "Exits: #{exitDirs.join ', '}"
+
+  lines.join "\n"
+
+
+object $thing
+parent $described
+
+method init_thing
+  vars location
+
+  location ?= null
+
+method location
+  vars location
+
+  location
+
+method move_to
+  vars location
+  args destination
+
+  location.remove_content(@) if location?
+  destination.add_content(@) if destination?
+  location = destination
+
+
+object $character
+parent $thing
+
+method init_character
+  disallow overrides
+  vars inventory
+
+  inventory ?= []
+
+method inventory
+  vars inventory
+
+  [inventory...]
+
+method take
+  vars inventory, location
+  args item
+
+  return "You can't take that." unless item.location?() is location
+
+  item.move_to null
+  inventory = [inventory..., item]
+  "You take #{item.short_description()}."
+
+method drop
+  vars inventory, location
+  args item
+
+  return "You don't have that." unless item in inventory
+
+  inventory = inventory.filter (i) -> i isnt item
+  item.move_to location
+  "You drop #{item.short_description()}."
+
+method go
+  vars location
+  args direction
+
+  exit = location?.find_exit?(direction)
+
+  unless exit?
+    return "You can't go #{direction}."
+
+  @move_to exit
+  exit.look(@)
+
+
+object $world
+
+method init_world
+  disallow overrides
+  vars start_room, rooms
+
+  start_room ?= null
+  rooms      ?= []
+
+method set_start_room
+  vars start_room
+  args room
+
+  start_room = room
+
+method start_room
+  vars start_room
+
+  start_room
+
+method add_room
+  vars rooms
+  args room
+
+  rooms = [rooms..., room] unless room in rooms
+
+method rooms
+  vars rooms
+
+  [rooms...]
+
+method create_room
+  using $room
+  vars rooms
+  args name, description
+
+  room = $room.spawn()
+  room.set_short_description name
+  room.set_description description
+
+  rooms = [rooms..., room]
+  room
+
+method dump
+  using toint
+  vars rooms, start_room
+
+  data =
+    start_room: if start_room? then toint(start_room) else null
+    rooms: rooms.map (room) => @dump_room room
+
+  JSON.stringify data, null, 2
+
+method dump_room
+  using toint
+  args room
+
+  exits = {}
+  for dir, dest of (room.exits() ? {})
+    exits[dir] = toint dest
+
+  id:          toint room
+  short:       room.short_description()
+  description: room.description()
+  exits:       exits
+  contents:    room.contents().map (item) -> toint item
+
+method load
+  using $room, toint
+  vars rooms, start_room
+  args json_string
+
+  data = JSON.parse json_string
+
+  id_map = {}
+
+  for room_data in data.rooms
+    room = $room.spawn()
+    room.set_short_description room_data.short
+    room.set_description room_data.description
+    id_map[room_data.id] = room
+    rooms = [rooms..., room]
+
+  for room_data in data.rooms
+    room = id_map[room_data.id]
+    for dir, dest_id of room_data.exits
+      if dest = id_map[dest_id]
+        room.add_exit dir, dest
+
+  if data.start_room? and id_map[data.start_room]?
+    start_room = id_map[data.start_room]
+
+  id_map
+

@@ -6,22 +6,43 @@ parent 1
 name sys
 
 method startup
-  using require, $module_loader, $admin
+  using require, $module_loader
   args options = {}
   vars port, addr
 
   process = require 'node:process'
   {port = 7777, addr = 'localhost'} = options
 
-  # Load networking module
-  net = $module_loader.load 'networking'
+  # Load modules
+  session  = $module_loader.load 'session'
+  net      = $module_loader.load 'networking'
+  player   = $module_loader.load 'player'
+  world    = $module_loader.load 'world'
+  readline = $module_loader.load 'readline'
+
+  # Get session exports
+  sess = session.exports()
+
+  # Configure session with readline, shutdown, and module loader
+  sess.set_readline readline
+  sess.set_shutdown => @shutdown()
+  sess.set_module_loader $module_loader
+
+  # Bootstrap world
+  sess.bootstrap_world world
 
   # Subscribe to connection events
-  net.on 'line', (conn, line) ->
-    $admin.receive_line line
-
   net.on 'connected', (conn) ->
-    $admin.set_connection conn
+    sess.on_connect conn, player
+
+  net.on 'line', (conn, line) ->
+    sess.on_line conn, line
+
+  net.on 'data', (conn, data) ->
+    sess.on_data conn, data
+
+  net.on 'disconnected', (conn) ->
+    sess.on_disconnect conn
 
   # Start listener with module's connection class
   @spawn_listener net.exports().connection, {port, addr}
@@ -67,18 +88,6 @@ method textdump
   args relativePath
 
   textdump relativePath
-
-method require
-  using sender, require
-  vars BIF_permission
-  args module
-
-  BIF_permission ?= {require: [$data, $admin]}
-
-  if sender() not in BIF_permission.require
-    throw new Error "Sender not authorized to use require"
-
-  require module
 
 method spawn_listener
   using listen
@@ -209,133 +218,14 @@ method list_methods
   list_methods()
 
 
-object $admin
-
-method set_connection
-  args conn
-  vars connection
-
-  connection = conn
-
-method receive_line
-  using clod_eval, tostr
-  vars connection
-  args s
-
-  s.replace /^\s*/, ''
-
-  switch s[0]
-    when undefined then result = "Yeah, I'm here."
-    when ';'       then result = @cmd_eval s[1..]
-    when '@'       then result = @do_cmd   s[1..]
-
-    else
-      result = "huh?"
-
-  @notify result + "\n\n"
-
-method do_cmd
-  args s
-
-  for command in @list_commands()
-    if s.startsWith "cmd_" + command
-      return @[command] s
-
-  return "I don't know what that means."
-
-method cmd_eval
-  using clod_eval
-  args s
-
-  try
-    "=> " + clod_eval s
-  catch e
-    e.stack
-
-method list_commands
-  @list_methods()
-    .filter (methodName) -> methodName.startsWith 'cmd_'
-    .map    (methodName) -> methodName[4..]
-
-method cmd_shutdown
-  $sys.shutdown()
-
-method notify
-  args s
-  vars connection
-
-  connection.emit(s)
-
-object $data
-
-method init_data
-  vars CoreObject, CoreFunction
-
-  CoreObject   = $sys.require './core-object'
-  CoreFunction = $sys.require './core-function'
-
-method to_string
-  args value
-
-  switch typeof value
-    when 'boolean', 'number', 'string',  'undefined', 'bigint',  'symbol'     then value.toString()
-    when 'object'                then @object_to_string value
-    when 'function'              then @function_to_string value
-    else
-      "didn't recognize type of #{value}"
-
-method object_to_string
-  vars CoreObject, CoreFunction
-  args obj
-
-  if obj instanceof CoreObject
-    @core_obj_to_string obj
-  else if obj instanceof CoreFunction
-    @core_fn_to_string obj
-  else
-    JSON.stringify obj # XXX: needs attention
-
-method core_obj_to_string
-  args obj
-
-  if name = obj._name
-    "$" + name
-  else
-    "#" + obj._id
-
-method core_fn_to_string
-  args fn
-
-  ( if (definer = fn.definer) instanceof CoreObject
-      @core_obj_to_string definer
-    else
-      "<unknown object>"
-  ) + ".#{fn.name}"
-
-method function_to_string
-  args fn
-
-  src = fn.toString()
-  matched = src.match ///
-    ^ function \s?
-         (?<name> [^(]* )
-      \( (?<args> [^)]* ) \)
-  ///
-  if matched
-    {name, args} = matched.groups
-    "#{name}(#{args}) { ... }"
-  else
-    src
-
-
 object $child_core_manager
 
 method load_core
-  using sender, $admin, $sys, $module_loader
+  using sender, $sys, $module_loader
   args relativePath
 
-  if sender() not in [$admin, $sys, $module_loader]
-    throw new Error "Only $admin, $sys, and $module_loader can load child cores."
+  if sender() not in [$sys, $module_loader]
+    throw new Error "Only $sys and $module_loader can load child cores."
 
   child = $child_core.spawn()
   $sys.load_core relativePath, child
@@ -345,13 +235,19 @@ method load_core
 object $module_loader
 
 method load
-  using $child_core_manager
+  using $child_core_manager, file_exists
   args module_name
   vars modules
 
   modules ?= {}
 
   path = "db/modules/#{module_name}.clod"
+
+  unless file_exists null, path
+    indexPath = "db/modules/#{module_name}/index.clod"
+    if file_exists null, indexPath
+      path = indexPath
+
   holder = $child_core_manager.load_core path
 
   modules[module_name] = holder
@@ -362,6 +258,31 @@ method get
   args module_name
 
   modules?[module_name]
+
+method list_loaded
+  vars modules
+
+  modules ?= {}
+  Object.keys modules
+
+method list_available
+  using list_dir, file_exists
+  args subpath = '.'
+
+  basePath = if subpath is '.' then 'db/modules' else "db/modules/#{subpath}"
+  results  = []
+
+  entries = list_dir null, basePath
+
+  for entry in entries
+    if entry.type is 'file' and entry.name.endsWith '.clod'
+      results.push entry.name.replace /\.clod$/, ''
+    else if entry.type is 'dir'
+      indexPath = "#{basePath}/#{entry.name}/index.clod"
+      if file_exists null, indexPath
+        results.push entry.name + '/'
+
+  results
 
 
 object $child_core
@@ -455,7 +376,7 @@ method check_obj_names
 
   if unknowns.length
     throw new Error "The following object names are not recognized in the parent core: " + unknowns.join ", "
-      
+
   return
 
-  
+

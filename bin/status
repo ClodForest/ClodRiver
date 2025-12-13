@@ -1,0 +1,25 @@
+#!/usr/bin/env coffee
+
+path = require 'node:path'
+fs   = require 'node:fs'
+
+rootDir = path.resolve __dirname, '..'
+pidFile = path.join rootDir, 'var', 'run', 'clodriver.pid'
+logFile = path.join rootDir, 'var', 'log', 'clodriver.log'
+
+unless fs.existsSync pidFile
+  console.log "ClodRiver is not running (no PID file)"
+  process.exit 1
+
+pid = parseInt fs.readFileSync(pidFile, 'utf8').trim()
+
+try
+  process.kill pid, 0
+  console.log "ClodRiver is running (PID #{pid})"
+
+  if fs.existsSync logFile
+    stats = fs.statSync logFile
+    console.log "Log file: #{logFile} (#{stats.size} bytes)"
+catch
+  console.log "ClodRiver is not running (stale PID #{pid})"
+  process.exit 1
