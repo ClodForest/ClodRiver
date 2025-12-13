@@ -431,6 +431,29 @@ method command_groups
         help:    'Set current mode'
         handler: (user, args) => @mode_set user, args
 
+  rel:
+    description: 'Relationship inspection and editing'
+    default:     'here'
+    commands:
+      here:
+        help:    'List relations on current room'
+        handler: (user, args) => @rel_here user, args
+      me:
+        help:    'List relations on your character'
+        handler: (user, args) => @rel_me user, args
+      on:
+        help:    'List relations on an entity'
+        handler: (user, args) => @rel_on user, args
+      types:
+        help:    'List available relation types'
+        handler: (user, args) => @rel_types user, args
+      add:
+        help:    'Add a relation'
+        handler: (user, args) => @rel_add user, args
+      remove:
+        help:    'Remove a relation'
+        handler: (user, args) => @rel_remove user, args
+
 method cmd_help
   args user, cmdArgs
 
@@ -880,4 +903,180 @@ method handle_program
   args user, target, cmdArgs
 
   "Programming mode not yet implemented for: #{target}"
+
+method rel_here
+  using toint
+  args user, cmdArgs
+
+  char = user.character()
+  unless char?
+    return "You don't have a character."
+
+  location = char.location?()
+  unless location?
+    return "You are nowhere."
+
+  @format_relations location, user
+
+method rel_me
+  using toint
+  args user, cmdArgs
+
+  char = user.character()
+  unless char?
+    return "You don't have a character."
+
+  @format_relations char, user
+
+method rel_on
+  using toint
+  args user, cmdArgs
+
+  if cmdArgs.length is 0
+    return "Usage: /rel on <entity-id>"
+
+  ops = user.world_ops()
+  unless ops?
+    return "World operations not available."
+
+  entityId = cmdArgs[0]
+  entity = ops.lookup_entity?(entityId)
+
+  unless entity?
+    return "Entity not found: #{entityId}"
+
+  @format_relations entity, user
+
+method rel_types
+  args user, cmdArgs
+
+  ops = user.world_ops()
+  unless ops?
+    return "World operations not available."
+
+  types = ops.relation_types?()
+  unless types?
+    return "No relation types available."
+
+  lines = ["Available relation types:"]
+  for name, type of types
+    relName = type.relation_name?() ? name
+    lines.push "  #{name.padEnd 14} - #{relName}"
+
+  lines.join "\n"
+
+method rel_add
+  using toint
+  args user, cmdArgs
+
+  if cmdArgs.length < 3
+    return "Usage: /rel add <subject-id> <rel-type> <object-or-literal>"
+
+  ops = user.world_ops()
+  unless ops?
+    return "World operations not available."
+
+  subjId  = cmdArgs[0]
+  typeName = cmdArgs[1]
+  objArg   = cmdArgs[2..].join ' '
+
+  subj = ops.lookup_entity?(subjId)
+  unless subj?
+    return "Subject entity not found: #{subjId}"
+
+  types = ops.relation_types?() ? {}
+  relType = types[typeName]
+  unless relType?
+    return "Unknown relation type: #{typeName}\nUse /rel types to see available types."
+
+  if objArg.startsWith('#') or objArg.match(/^\d+$/)
+    obj = ops.lookup_entity?(objArg)
+    unless obj?
+      return "Object entity not found: #{objArg}"
+  else
+    obj = objArg
+
+  rel = ops.create_relation?(subj, obj, relType)
+
+  if rel?
+    subjName = subj.short_description?() ? "##{toint subj}"
+    objName  = if obj._id? then (obj.short_description?() ? "##{toint obj}") else JSON.stringify(obj)
+    "Created relation [#{toint rel}]: #{subjName} --#{typeName}--> #{objName}"
+  else
+    "Failed to create relation."
+
+method rel_remove
+  using toint
+  args user, cmdArgs
+
+  if cmdArgs.length is 0
+    return "Usage: /rel remove <relation-id>"
+
+  ops = user.world_ops()
+  unless ops?
+    return "World operations not available."
+
+  relId = cmdArgs[0]
+  rel = ops.lookup_entity?(relId)
+
+  unless rel?
+    return "Relation not found: #{relId}"
+
+  unless rel.disconnect?
+    return "Entity #{relId} is not a relation."
+
+  subj = rel.subject?()
+  obj  = rel.object?()
+  relType = rel.relation_type?()
+
+  typeName = '???'
+  types = ops.relation_types?() ? {}
+  for name, type of types
+    if type is relType
+      typeName = name
+      break
+
+  subjName = if subj?._id? then (subj.short_description?() ? "##{toint subj}") else '???'
+  objName  = if obj?._id?  then (obj.short_description?()  ? "##{toint obj}")  else JSON.stringify(obj)
+
+  ops.remove_relation?(rel)
+
+  "Removed relation [#{toint rel}]: #{subjName} --#{typeName}--> #{objName}"
+
+method format_relations
+  using toint
+  args entity, user
+
+  ops = user.world_ops()
+  unless ops?
+    return "World operations not available."
+
+  types = ops.relation_types?() ? {}
+
+  entityName = entity.short_description?() ? entity.root_name?() ? "##{toint entity}"
+
+  rels = entity.relations?()
+  unless rels? and rels.length > 0
+    return "#{entityName} has no relations."
+
+  lines = ["Relations on #{entityName}:"]
+
+  for rel in rels
+    relType = rel.relation_type?()
+    typeName = '???'
+
+    for name, type of types
+      if type is relType
+        typeName = name
+        break
+
+    subj = rel.subject?()
+    obj  = rel.object?()
+
+    subjName = if subj?._id? then (subj.short_description?() ? subj.root_name?() ? "##{toint subj}") else '???'
+    objName  = if obj?._id?  then (obj.short_description?()  ? obj.root_name?()  ? "##{toint obj}")  else JSON.stringify(obj)
+
+    lines.push "  [#{toint rel}] #{subjName} --#{typeName}--> #{objName}"
+
+  lines.join "\n"
 

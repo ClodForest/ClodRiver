@@ -1,0 +1,720 @@
+# CORVID World Module
+# v0.0.0
+# Entity-relation based world using euclidic foundations
+
+object 0
+parent 1
+name sys
+
+method loaded
+  args module
+
+  module.exports.world       = $world
+  module.exports.query       = $query
+  module.exports.factory     = $factory
+  module.exports.relation    = $relation
+  module.exports.room        = $euclidic_room
+  module.exports.thing       = $euclidic_thing
+  module.exports.actor       = $euclidic_actor
+
+  module.exports.create_world   = -> $world.create()
+  module.exports.get_world      = -> $world.current()
+  module.exports.dump_world     = -> $world.dump()
+  module.exports.load_world     = (json) -> $world.load json
+  module.exports.create_room      = (short, desc) -> $factory.create_room short, desc
+  module.exports.create_thing     = (short, desc) -> $factory.create_thing short, desc
+  module.exports.create_actor     = (short, desc) -> $factory.create_actor short, desc
+  module.exports.create_character = (short, desc) -> $factory.create_actor short, desc
+
+  module.exports.relation_types = ->
+    instance_of:   $rel_instance_of
+    a_kind_of:     $rel_a_kind_of
+    contains:      $rel_contains
+    described_by:  $rel_described_by
+    named:         $rel_named
+    short_name:    $rel_short_name
+    exits_to:      $rel_exits_to
+
+  module.exports.lookup_entity = (id) ->
+    $world.lookup_entity id
+
+  module.exports.create_relation = (subj, obj, relType) ->
+    rel = $relation.spawn()
+    rel.connect subj, obj, relType
+    rel
+
+  module.exports.remove_relation = (rel) ->
+    rel.disconnect() if rel?.disconnect?
+    true
+
+
+object 1
+name root
+
+default_parent $root
+
+method spawn
+  disallow overrides
+  using create
+
+  newObj = create @
+  newObj.init()
+  newObj
+
+method init
+  disallow overrides
+  using list_methods
+
+  for p in @ancestors().reverse()
+    for methodName in list_methods(p)
+      if methodName.startsWith('init_')
+        method = p[methodName]
+        if method?.definer is p
+          @[methodName]()
+
+method ancestors
+  using parent
+
+  p = parent()
+  if p? and p._id?
+    [p, p.ancestors()...]
+  else
+    []
+
+method root_name
+  using toint
+  vars name
+
+  name ? '#' + toint(@)
+
+
+# Entity Base - anything that can have relations
+
+object $entity
+
+method init_entity
+  disallow overrides
+  vars relations
+
+  relations = [] unless relations?
+
+method relations
+  vars relations
+
+  relations ? []
+
+method relation_arriving
+  vars relations
+  args rel
+
+  relations ?= []
+  relations = [relations..., rel] unless rel in relations
+
+method relation_departing
+  vars relations
+  args rel
+
+  relId = rel?._id
+  relations = (relations ? []).filter (r) -> r._id isnt relId
+
+method relations_of_type
+  vars relations
+  args rel_type
+
+  (relations ? []).filter (r) -> r.relation_type() is rel_type
+
+method short_description
+  vars short_desc, relations
+
+  for rel in (relations ? [])
+    relType = rel.relation_type?()
+    if relType?.relation_name?() is 'short name'
+      return rel.object()
+
+  short_desc ? @root_name()
+
+method set_short_description
+  vars short_desc
+  args text
+
+  short_desc = text
+
+method description
+  vars desc, relations
+
+  for rel in (relations ? [])
+    relType = rel.relation_type?()
+    if relType?.relation_name?() is 'described by'
+      return rel.object()
+
+  desc ? 'You see nothing special.'
+
+method set_description
+  vars desc
+  args text
+
+  desc = text
+
+method location
+  vars entity_location
+
+  entity_location
+
+method move_to
+  vars entity_location
+  args destination
+
+  if entity_location? and entity_location.remove_content?
+    entity_location.remove_content(@)
+  if destination? and destination.add_content?
+    destination.add_content(@)
+  entity_location = destination
+
+method contents
+  vars entity_contents
+
+  entity_contents ? []
+
+method add_content
+  vars entity_contents
+  args item
+
+  entity_contents ?= []
+  entity_contents = [entity_contents..., item] unless item in entity_contents
+
+method remove_content
+  vars entity_contents
+  args item
+
+  entity_contents = (entity_contents ? []).filter (i) -> i isnt item
+
+method exits
+  vars entity_exits
+
+  entity_exits ? {}
+
+method add_exit
+  vars entity_exits
+  args direction, destination
+
+  entity_exits ?= {}
+  entity_exits[direction] = destination
+
+method find_exit
+  vars entity_exits
+  args direction
+
+  entity_exits?[direction]
+
+method look
+  vars entity_contents, entity_exits
+  args viewer
+
+  lines = [@description()]
+
+  others = (entity_contents ? []).filter (c) -> c isnt viewer
+  if others.length > 0
+    lines.push ""
+    lines.push "You see:"
+    for item in others
+      lines.push "  #{item.short_description()}"
+
+  exitDirs = Object.keys(entity_exits ? {})
+  if exitDirs.length > 0
+    lines.push ""
+    lines.push "Exits: #{exitDirs.join ', '}"
+
+  lines.join "\n"
+
+
+# Relation - connects a subject to an object (entity or literal)
+
+object $relation
+parent $entity
+
+method init_relation
+  disallow overrides
+  vars subject, object, relation_type
+
+  subject       ?= null
+  object        ?= null
+  relation_type ?= null
+
+method subject
+  vars subject
+
+  subject
+
+method object
+  vars object
+
+  object
+
+method object_is_literal
+  vars object
+
+  not object?._id?
+
+method relation_type
+  vars relation_type
+
+  relation_type
+
+method endpoints
+  vars subject, object
+
+  {subject, object}
+
+method connect
+  vars subject, object, relation_type
+  args new_subject, new_object, new_type
+
+  if subject?._id? and subject.relation_departing?
+    subject.relation_departing(@)
+  if object?._id? and object.relation_departing?
+    object.relation_departing(@)
+
+  subject       = new_subject
+  object        = new_object
+  relation_type = new_type if new_type?
+
+  if subject?._id? and subject.relation_arriving?
+    subject.relation_arriving(@)
+  if object?._id? and object.relation_arriving?
+    object.relation_arriving(@)
+
+  @
+
+method disconnect
+  vars subject, object
+
+  if subject?._id? and subject.relation_departing?
+    subject.relation_departing(@)
+  if object?._id? and object.relation_departing?
+    object.relation_departing(@)
+
+  subject = null
+  object  = null
+
+  @
+
+
+# Euclidic Relation Types
+
+object $rel_instance_of
+parent $entity
+
+method relation_name
+  'instance of'
+
+
+object $rel_a_kind_of
+parent $entity
+
+method relation_name
+  'a kind of'
+
+
+object $rel_contains
+parent $entity
+
+method relation_name
+  'contains'
+
+
+object $rel_described_by
+parent $entity
+
+method relation_name
+  'described by'
+
+
+object $rel_named
+parent $entity
+
+method relation_name
+  'named'
+
+
+object $rel_short_name
+parent $entity
+
+method relation_name
+  'short name'
+
+
+object $rel_exits_to
+parent $entity
+
+method relation_name
+  'exits to'
+
+method init_exits_to
+  vars direction
+
+  direction ?= null
+
+method direction
+  vars direction
+
+  direction
+
+method set_direction
+  vars direction
+  args dir
+
+  direction = dir
+
+
+# Euclidic Type Hierarchy
+
+object $euclidic_group
+parent $entity
+
+method type_name
+  'group'
+
+
+object $euclidic_location
+parent $entity
+
+method init_euclidic_location
+  vars kind_of_rel
+
+  kind_of_rel = $relation.spawn()
+  kind_of_rel.connect(@, $euclidic_group, $rel_a_kind_of)
+
+method type_name
+  'location'
+
+
+object $euclidic_room
+parent $entity
+
+method init_euclidic_room
+  vars kind_of_rel
+
+  kind_of_rel = $relation.spawn()
+  kind_of_rel.connect(@, $euclidic_location, $rel_a_kind_of)
+
+method type_name
+  'room'
+
+
+object $euclidic_thing
+parent $entity
+
+method init_euclidic_thing
+  vars kind_of_rel
+
+  kind_of_rel = $relation.spawn()
+  kind_of_rel.connect(@, $euclidic_group, $rel_a_kind_of)
+
+method type_name
+  'thing'
+
+
+object $euclidic_actor
+parent $entity
+
+method init_euclidic_actor
+  vars kind_of_rel
+
+  kind_of_rel = $relation.spawn()
+  kind_of_rel.connect(@, $euclidic_thing, $rel_a_kind_of)
+
+method type_name
+  'actor'
+
+
+# Factory - creates instances with proper relations
+
+object $factory
+
+method create_instance
+  args euclidic_type
+
+  instance = $entity.spawn()
+  rel = $relation.spawn()
+  rel.connect(instance, euclidic_type, $rel_instance_of)
+  instance
+
+method set_name
+  args entity, name
+
+  rel = $relation.spawn()
+  rel.connect(entity, name, $rel_named)
+  entity
+
+method set_short_name
+  args entity, short_name
+
+  rel = $relation.spawn()
+  rel.connect(entity, short_name, $rel_short_name)
+  entity
+
+method set_description
+  args entity, description
+
+  rel = $relation.spawn()
+  rel.connect(entity, description, $rel_described_by)
+  entity
+
+method add_to_container
+  args container, contained
+
+  rel = $relation.spawn()
+  rel.connect(container, contained, $rel_contains)
+  contained
+
+method add_exit
+  args from_room, to_room, direction
+
+  rel = $relation.spawn()
+  rel.connect(from_room, to_room, $rel_exits_to)
+  rel.set_direction(direction)
+  rel
+
+method create_room
+  args short_name, description
+
+  room = @create_instance($euclidic_room)
+  @set_short_name(room, short_name)
+  @set_description(room, description)
+  room
+
+method create_thing
+  args short_name, description
+
+  thing = @create_instance($euclidic_thing)
+  @set_short_name(thing, short_name)
+  @set_description(thing, description) if description?
+  thing
+
+method create_actor
+  args short_name, description
+
+  actor = @create_instance($euclidic_actor)
+  @set_short_name(actor, short_name)
+  @set_description(actor, description) if description?
+  actor
+
+
+# Query - helpers to traverse relations
+
+object $query
+
+method get_name
+  args entity
+
+  for rel in (entity.relations?() ? [])
+    if rel.relation_type() is $rel_named
+      return rel.object()
+  null
+
+method get_short_name
+  args entity
+
+  for rel in (entity.relations?() ? [])
+    if rel.relation_type() is $rel_short_name
+      return rel.object()
+  entity.root_name?() ? '???'
+
+method get_description
+  args entity
+
+  for rel in (entity.relations?() ? [])
+    if rel.relation_type() is $rel_described_by
+      return rel.object()
+  'You see nothing special.'
+
+method get_contents
+  args container
+
+  contents = []
+  for rel in (container.relations?() ? [])
+    if rel.relation_type() is $rel_contains
+      contents.push rel.object()
+  contents
+
+method get_container
+  args entity
+
+  for rel in (entity.relations?() ? [])
+    endpoints = rel.endpoints()
+    if rel.relation_type() is $rel_contains and endpoints.object is entity
+      return endpoints.subject
+  null
+
+method get_exits
+  args room
+
+  exits = {}
+  for rel in (room.relations?() ? [])
+    if rel.relation_type() is $rel_exits_to
+      dir = rel.direction?() ? 'somewhere'
+      exits[dir] = rel.object()
+  exits
+
+method is_instance_of
+  args entity, euclidic_type
+
+  for rel in (entity.relations?() ? [])
+    if rel.relation_type() is $rel_instance_of
+      if rel.object() is euclidic_type
+        return true
+      if @is_kind_of(rel.object(), euclidic_type)
+        return true
+  false
+
+method is_kind_of
+  args type_a, type_b
+
+  return true if type_a is type_b
+
+  for rel in (type_a.relations?() ? [])
+    if rel.relation_type() is $rel_a_kind_of
+      return true if rel.object() is type_b
+      return true if @is_kind_of(rel.object(), type_b)
+
+  false
+
+
+# World - manages the collection of rooms and start point
+
+object $world
+
+method init_world
+  vars current_world
+
+  current_world ?= null
+
+method current
+  vars current_world
+
+  current_world
+
+method create
+  vars current_world, rooms, start_room
+
+  current_world = @
+  rooms         = []
+  start_room    = null
+
+  @
+
+method add_room
+  vars rooms
+  args room
+
+  rooms = [rooms..., room] unless room in rooms
+
+method rooms
+  vars rooms
+
+  rooms ? []
+
+method set_start_room
+  vars start_room
+  args room
+
+  start_room = room
+
+method start_room
+  vars start_room
+
+  start_room
+
+method create_room
+  vars rooms
+  args short_name, description
+
+  room = $factory.create_room(short_name, description)
+  rooms = [rooms..., room]
+  room
+
+method look_at
+  args room, viewer
+
+  lines = [$query.get_description(room)]
+
+  contents = $query.get_contents(room)
+  others = contents.filter (c) -> c isnt viewer
+
+  if others.length > 0
+    lines.push ""
+    lines.push "You see:"
+    for item in others
+      lines.push "  #{$query.get_short_name item}"
+
+  exits = $query.get_exits(room)
+  exitDirs = Object.keys exits
+
+  if exitDirs.length > 0
+    lines.push ""
+    lines.push "Exits: #{exitDirs.join ', '}"
+
+  lines.join "\n"
+
+method dump
+  using toint
+  vars rooms, start_room
+
+  data =
+    start_room: if start_room? then toint(start_room) else null
+    rooms: (rooms ? []).map (room) => @dump_room room
+
+  JSON.stringify data, null, 2
+
+method dump_room
+  using toint
+  args room
+
+  exits = {}
+  for dir, dest of $query.get_exits(room)
+    exits[dir] = toint dest
+
+  id:          toint room
+  short:       $query.get_short_name room
+  description: $query.get_description room
+  exits:       exits
+  contents:    ($query.get_contents(room)).map (item) -> toint item
+
+method load
+  using toint
+  vars rooms, start_room
+  args json_string
+
+  data = JSON.parse json_string
+
+  id_map = {}
+  rooms = []
+
+  for room_data in data.rooms
+    room = $factory.create_room(room_data.short, room_data.description)
+    id_map[room_data.id] = room
+    rooms = [rooms..., room]
+
+  for room_data in data.rooms
+    room = id_map[room_data.id]
+    for dir, dest_id of room_data.exits
+      if dest = id_map[dest_id]
+        $factory.add_exit(room, dest, dir)
+
+  if data.start_room? and id_map[data.start_room]?
+    start_room = id_map[data.start_room]
+
+  id_map
+
+method lookup_entity
+  using toobj
+  args id
+
+  if typeof id is 'string'
+    if id.startsWith '#'
+      id = parseInt id[1..]
+    else
+      id = parseInt id
+
+  toobj id
+

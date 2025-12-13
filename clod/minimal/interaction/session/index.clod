@@ -107,15 +107,15 @@ method bootstrap_world
 
   theWorld = exportsObj.create_world()
 
-  start_room = exportsObj.create_room()
-  start_room.set_short_description "The Void"
-  start_room.set_description """
+  voidDesc = """
     You float in an endless void. The darkness stretches infinitely in all
     directions, yet you can see yourself clearly, as if lit by some unseen
     source. This is the beginning - or perhaps the end - of all things.
 
     A faint shimmer in the distance suggests there may be more to discover.
   """
+
+  start_room = exportsObj.create_room "The Void", voidDesc
 
   theWorld.set_start_room start_room
   theWorld.add_room start_room
@@ -131,8 +131,7 @@ method on_connect
   user = player_exports.create_user()
   user.set_connection conn
 
-  char = world_exports.create_character()
-  char.set_short_description "a shadowy figure"
+  char = world_exports.create_character "a shadowy figure"
   char.move_to start_room
   user.set_character char
 
@@ -153,6 +152,13 @@ method on_connect
     write_file:     (path, content) -> write_file null, path, content
     read_file:      (path) -> read_file null, path
     file_exists:    (path) -> file_exists null, path
+    query:          -> world_exports.query
+    factory:        -> world_exports.factory
+    relation:       -> world_exports.relation
+    relation_types: -> world_exports.relation_types?() ? []
+    lookup_entity:  (id) -> world_exports.lookup_entity?(id)
+    create_relation: (subj, obj, type) -> world_exports.create_relation?(subj, obj, type)
+    remove_relation: (rel) -> world_exports.remove_relation?(rel)
 
   server_ops =
     shutdown: -> server_shutdown?()

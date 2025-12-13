@@ -260,7 +260,8 @@ method module_registry
   player:     'clod/minimal/interaction/player/index.clod'
   admin:      'clod/minimal/interaction/admin/index.clod'
   data:       'clod/minimal/interaction/data/index.clod'
-  world:      'clod/minimal/world/spatial/index.clod'
+  world:      'clod/minimal/world/corvid/index.clod'
+  spatial:    'clod/minimal/world/spatial/index.clod'
   networking: 'clod/transports/network/index.clod'
   readline:   'clod/features/readline/index.clod'
 

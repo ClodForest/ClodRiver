@@ -1,0 +1,314 @@
+# Euclidic foundations for CORVID
+# v0.0.0
+# Foundational relation types and type hierarchy
+
+object $euclidics
+parent $root
+
+default_parent $euclidics
+
+method module_info
+  version:  'v0.0.0'
+  name:     'euclidic'
+  contents: $euclidics.descendents()
+
+
+# Foundational Relation Types
+# These are euclidic concepts - the platonic ideals of relationships
+
+object $rel_instance_of
+parent $entity_base
+
+method relation_name
+  'instance of'
+
+method description
+  'Subject is an instance of object (a euclidic type)'
+
+
+object $rel_a_kind_of
+parent $entity_base
+
+method relation_name
+  'a kind of'
+
+method description
+  'Subject euclidic type is a specialization of object euclidic type'
+
+
+object $rel_contains
+parent $entity_base
+
+method relation_name
+  'contains'
+
+method description
+  'Subject group contains object as a member'
+
+
+object $rel_described_by
+parent $entity_base
+
+method relation_name
+  'described by'
+
+method description
+  'Subject is described by object (typically a literal string)'
+
+
+object $rel_named
+parent $entity_base
+
+method relation_name
+  'named'
+
+method description
+  'Subject has the name given by object (a literal string)'
+
+
+object $rel_short_name
+parent $entity_base
+
+method relation_name
+  'short name'
+
+method description
+  'Subject has the short name given by object (for room titles, etc.)'
+
+
+object $rel_exits_to
+parent $entity_base
+
+method relation_name
+  'exits to'
+
+method description
+  'Subject location has an exit leading to object location'
+
+
+# Euclidic Type Hierarchy
+# These are the platonic ideals that instances relate to via 'instance of'
+
+object $euclidic_group
+parent $entity_base
+
+method type_name
+  'group'
+
+method description
+  'The axiomatic euclidic group - all euclidic types derive from this'
+
+
+object $euclidic_location
+parent $entity_base
+
+method init_euclidic_location
+  using $relation, $rel_a_kind_of
+  vars kind_of_rel
+
+  kind_of_rel = $relation.spawn()
+  kind_of_rel.connect(@, $euclidic_group, $rel_a_kind_of)
+
+method type_name
+  'location'
+
+method description
+  'A spatial group - a place where things can be'
+
+
+object $euclidic_room
+parent $entity_base
+
+method init_euclidic_room
+  using $relation, $rel_a_kind_of
+  vars kind_of_rel
+
+  kind_of_rel = $relation.spawn()
+  kind_of_rel.connect(@, $euclidic_location, $rel_a_kind_of)
+
+method type_name
+  'room'
+
+method description
+  'An enclosed location with exits to other rooms'
+
+
+object $euclidic_thing
+parent $entity_base
+
+method init_euclidic_thing
+  using $relation, $rel_a_kind_of
+  vars kind_of_rel
+
+  kind_of_rel = $relation.spawn()
+  kind_of_rel.connect(@, $euclidic_group, $rel_a_kind_of)
+
+method type_name
+  'thing'
+
+method description
+  'A physical object that can be contained and manipulated'
+
+
+object $euclidic_actor
+parent $entity_base
+
+method init_euclidic_actor
+  using $relation, $rel_a_kind_of
+  vars kind_of_rel
+
+  kind_of_rel = $relation.spawn()
+  kind_of_rel.connect(@, $euclidic_thing, $rel_a_kind_of)
+
+method type_name
+  'actor'
+
+method description
+  'An entity that can take actions - players, NPCs, etc.'
+
+
+# Helper object for creating instances with proper relations
+
+object $euclidic_factory
+parent $entity_base
+
+method create_instance
+  using $entity_base, $relation, $rel_instance_of
+  args euclidic_type
+
+  instance = $entity_base.spawn()
+
+  rel = $relation.spawn()
+  rel.connect(instance, euclidic_type, $rel_instance_of)
+
+  instance
+
+method set_name
+  using $relation, $rel_named
+  args entity, name
+
+  rel = $relation.spawn()
+  rel.connect(entity, name, $rel_named)
+  entity
+
+method set_short_name
+  using $relation, $rel_short_name
+  args entity, short_name
+
+  rel = $relation.spawn()
+  rel.connect(entity, short_name, $rel_short_name)
+  entity
+
+method set_description
+  using $relation, $rel_described_by
+  args entity, description
+
+  rel = $relation.spawn()
+  rel.connect(entity, description, $rel_described_by)
+  entity
+
+method add_to_container
+  using $relation, $rel_contains
+  args container, contained
+
+  rel = $relation.spawn()
+  rel.connect(container, contained, $rel_contains)
+  contained
+
+method add_exit
+  using $relation, $rel_exits_to
+  args from_room, to_room, direction
+
+  rel = $relation.spawn()
+  rel.connect(from_room, to_room, $rel_exits_to)
+  rel.set_direction?(direction) if direction?
+  rel
+
+method create_room
+  args short_name, description
+
+  room = @create_instance($euclidic_room)
+  @set_short_name(room, short_name)
+  @set_description(room, description)
+  room
+
+
+# Query helpers
+
+object $euclidic_query
+parent $entity_base
+
+method get_name
+  args entity
+
+  for rel in entity.relations()
+    if rel.relation_type() is $rel_named
+      return rel.object()
+  null
+
+method get_short_name
+  args entity
+
+  for rel in entity.relations()
+    if rel.relation_type() is $rel_short_name
+      return rel.object()
+  null
+
+method get_description
+  args entity
+
+  for rel in entity.relations()
+    if rel.relation_type() is $rel_described_by
+      return rel.object()
+  null
+
+method get_contents
+  args container
+
+  contents = []
+  for rel in container.relations()
+    if rel.relation_type() is $rel_contains
+      contents.push rel.object()
+  contents
+
+method get_container
+  args entity
+
+  for rel in entity.relations()
+    endpoints = rel.endpoints()
+    if rel.relation_type() is $rel_contains and endpoints.object is entity
+      return endpoints.subject
+  null
+
+method get_exits
+  args room
+
+  exits = []
+  for rel in room.relations()
+    if rel.relation_type() is $rel_exits_to
+      exits.push rel
+  exits
+
+method is_instance_of
+  args entity, euclidic_type
+
+  for rel in entity.relations()
+    if rel.relation_type() is $rel_instance_of
+      if rel.object() is euclidic_type
+        return true
+      if @is_kind_of(rel.object(), euclidic_type)
+        return true
+  false
+
+method is_kind_of
+  args type_a, type_b
+
+  return true if type_a is type_b
+
+  for rel in type_a.relations()
+    if rel.relation_type() is $rel_a_kind_of
+      return true if rel.object() is type_b
+      return true if @is_kind_of(rel.object(), type_b)
+
+  false
+

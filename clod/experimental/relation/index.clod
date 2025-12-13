@@ -36,6 +36,11 @@ method object
 
   object
 
+method object_is_literal
+  vars object
+
+  not object?._id?
+
 method endpoints
   vars subject, object
 
@@ -56,23 +61,23 @@ method connect
   vars subject, object, relation_type
   args new_subject, new_object, new_type
 
-  subject?.relation_departing(@)
-  object?.relation_departing(@)
+  subject?.relation_departing?(@)
+  object?.relation_departing?(@) if object?._id?
 
   subject       = new_subject
   object        = new_object
   relation_type = new_type if new_type?
 
-  subject?.relation_arriving(@)
-  object?.relation_arriving(@)
+  subject?.relation_arriving?(@)
+  object?.relation_arriving?(@) if object?._id?
 
   @
 
 method disconnect
   vars subject, object
 
-  subject?.relation_departing(@)
-  object?.relation_departing(@)
+  subject?.relation_departing?(@)
+  object?.relation_departing?(@) if object?._id?
 
   subject = null
   object  = null
@@ -100,15 +105,15 @@ method connect
   vars subject, object, relation_type
   args new_subject, new_object, new_type
 
-  subject?.relation_departing(@)
-  object?.relation_departing(@)
+  subject?.relation_departing?(@)
+  object?.relation_departing?(@) if object?._id?
 
   subject       = new_subject
   object        = new_object
   relation_type = new_type if new_type?
 
-  subject?.relation_arriving(@)
-  object?.relation_arriving(@)
+  subject?.relation_arriving?(@)
+  object?.relation_arriving?(@) if object?._id?
 
   @
 
