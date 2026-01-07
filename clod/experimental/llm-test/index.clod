@@ -1,0 +1,92 @@
+# LLM integration test
+# Manual test for connect_llm and llm_complete BIFs
+#
+# Usage:
+#   node bin/run-clod clod/experimental/llm-test/index.clod
+#
+# Make sure Ollama is running with a model available
+
+object $root
+
+method init
+
+method spawn
+  disallow overrides
+  using create
+
+  newObj = create @
+  newObj.init?()
+  newObj
+
+
+object $llm_delegate
+parent $root
+
+method do_prompt
+  using llm_complete
+  args prompt
+
+  llm_complete {prompt}
+
+method do_prompt_stream
+  using llm_complete
+  args prompt
+
+  llm_complete {prompt, stream: true}
+
+method completed
+  args response
+
+  content = response.choices?[0]?.message?.content ? '(no content)'
+  console.log '\n=== LLM Response ==='
+  console.log content
+  console.log '===================='
+
+method error
+  args err
+
+  console.log '\n=== LLM Error ==='
+  console.log err.message
+  console.log '================='
+
+method stream
+  args chunk
+
+  process.stdout.write chunk
+
+
+object $sys
+parent $root
+
+method test_llm
+  using connect_llm, send
+  args prompt = 'Hello! What is 2+2? Reply briefly.'
+
+  delegate = $llm_delegate.spawn()
+
+  connect_llm delegate, {
+    baseURL: 'http://localhost:11434/v1'
+    model:   'gpt-oss:latest'
+  }
+
+  send delegate, 'do_prompt', prompt
+
+method test_llm_stream
+  using connect_llm, send
+  args prompt = 'Count from 1 to 5, one number per line.'
+
+  delegate = $llm_delegate.spawn()
+
+  connect_llm delegate, {
+    baseURL: 'http://localhost:11434/v1'
+    model:   'gpt-oss:latest'
+  }
+
+  console.log 'Streaming response:'
+  send delegate, 'do_prompt_stream', prompt
+
+method loaded
+  args module
+
+  console.log 'LLM test module loaded'
+  console.log 'Run $sys.test_llm() or $sys.test_llm_stream() to test'

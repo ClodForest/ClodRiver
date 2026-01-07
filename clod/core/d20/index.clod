@@ -1,0 +1,508 @@
+# D20 System mechanics for ClodMUD
+# v0.1.0
+#
+# Implements core 5e-style mechanics:
+# - Dice rolling with advantage/disadvantage
+# - Ability checks and saves
+# - Attack rolls and damage
+# - Condition tracking
+
+object $d20_module
+parent $root
+
+default_parent $d20_module
+
+method module_info
+  version:  'v0.1.0'
+  name:     'd20'
+  contents: ['$d20', '$dice']
+
+
+object $dice
+parent $root
+
+method roll
+  args expr, options = {}
+
+  return @roll_die(expr, options) if typeof expr is 'number'
+
+  if typeof expr is 'string'
+    return @parse_and_roll expr, options
+
+  throw new Error "Invalid dice expression: #{expr}"
+
+method roll_die
+  args sides, options = {}
+
+  roll1 = Math.floor(Math.random() * sides) + 1
+
+  if options.advantage or options.disadvantage
+    roll2 = Math.floor(Math.random() * sides) + 1
+    if options.advantage
+      {value: Math.max(roll1, roll2), rolls: [roll1, roll2], type: 'advantage'}
+    else
+      {value: Math.min(roll1, roll2), rolls: [roll1, roll2], type: 'disadvantage'}
+  else
+    {value: roll1, rolls: [roll1], type: 'normal'}
+
+method parse_and_roll
+  args expr, options = {}
+
+  expr = expr.toLowerCase().trim()
+
+  match = expr.match /^(\d*)d(\d+)([+-]\d+)?$/
+  unless match
+    if expr.match /^[+-]?\d+$/
+      return {value: parseInt(expr), rolls: [], modifier: parseInt(expr), type: 'constant'}
+    throw new Error "Cannot parse dice expression: #{expr}"
+
+  [_, count, sides, mod] = match
+  count = parseInt(count) or 1
+  sides = parseInt sides
+  modifier = parseInt(mod) or 0
+
+  rolls = []
+  total = 0
+
+  if count is 1 and sides is 20 and (options.advantage or options.disadvantage)
+    result = @roll_die sides, options
+    rolls = result.rolls
+    total = result.value
+    type = result.type
+  else
+    for i in [1..count]
+      r = Math.floor(Math.random() * sides) + 1
+      rolls.push r
+      total += r
+    type = 'normal'
+
+  {
+    value:    total + modifier
+    rolls:    rolls
+    dice:     "#{count}d#{sides}"
+    modifier: modifier
+    type:     type
+  }
+
+method d20
+  args options = {}
+
+  @roll 'd20', options
+
+method d
+  args sides, options = {}
+
+  @roll sides, options
+
+
+object $d20
+parent $root
+
+method init_d20
+  vars facts
+
+  facts = null
+
+method configure
+  vars facts
+  args options
+
+  facts = options.facts if options.facts?
+
+method ability_modifier
+  args score
+
+  Math.floor((score - 10) / 2)
+
+method proficiency_bonus
+  args level
+
+  Math.floor((level - 1) / 4) + 2
+
+method get_stat
+  using send
+  vars facts
+  args entity, stat
+
+  value = send facts, 'get', entity, stat
+  return parseInt(value) if value?
+  10
+
+method get_modifier
+  using send
+  vars facts
+  args entity, ability
+
+  score = @get_stat entity, ability
+  @ability_modifier score
+
+method get_skill_modifier
+  using send
+  vars facts
+  args entity, skill
+
+  skill_to_ability =
+    acrobatics:      'dex'
+    animal_handling: 'wis'
+    arcana:          'int'
+    athletics:       'str'
+    deception:       'cha'
+    history:         'int'
+    insight:         'wis'
+    intimidation:    'cha'
+    investigation:   'int'
+    medicine:        'wis'
+    nature:          'int'
+    perception:      'wis'
+    performance:     'cha'
+    persuasion:      'cha'
+    religion:        'int'
+    sleight_of_hand: 'dex'
+    stealth:         'dex'
+    survival:        'wis'
+
+  ability = skill_to_ability[skill.toLowerCase()] ? 'int'
+  base_mod = @get_modifier entity, ability
+
+  proficient = send facts, 'has', entity, 'proficiency', skill
+  expertise  = send facts, 'has', entity, 'expertise', skill
+
+  level = @get_stat entity, 'level'
+  level = 1 if level < 1
+  prof_bonus = @proficiency_bonus level
+
+  if expertise
+    base_mod + (prof_bonus * 2)
+  else if proficient
+    base_mod + prof_bonus
+  else
+    base_mod
+
+method check
+  using send
+  vars facts
+  args entity, skill, dc, options = {}
+
+  modifier = @get_skill_modifier entity, skill
+
+  advantage = options.advantage ? false
+  disadvantage = options.disadvantage ? false
+
+  if send facts, 'has', entity, 'condition', 'frightened'
+    disadvantage = true if skill in ['attack', 'ability_check']
+
+  if send facts, 'has', entity, 'condition', 'poisoned'
+    disadvantage = true
+
+  if send facts, 'has', entity, 'condition', 'invisible'
+    advantage = true if skill is 'stealth'
+
+  if advantage and disadvantage
+    advantage = false
+    disadvantage = false
+
+  roll_result = $dice.roll 'd20', {advantage, disadvantage}
+  total = roll_result.value + modifier
+
+  {
+    success:  total >= dc
+    total:    total
+    roll:     roll_result.value
+    rolls:    roll_result.rolls
+    modifier: modifier
+    dc:       dc
+    margin:   total - dc
+    type:     roll_result.type
+    critical: roll_result.value is 20
+    fumble:   roll_result.value is 1
+  }
+
+method save
+  using send
+  vars facts
+  args entity, ability, dc, options = {}
+
+  modifier = @get_modifier entity, ability
+
+  proficient = send facts, 'has', entity, 'save_proficiency', ability
+  if proficient
+    level = @get_stat entity, 'level'
+    modifier += @proficiency_bonus(level ? 1)
+
+  advantage = options.advantage ? false
+  disadvantage = options.disadvantage ? false
+
+  if send facts, 'has', entity, 'condition', 'restrained'
+    disadvantage = true if ability is 'dex'
+
+  if send facts, 'has', entity, 'condition', 'poisoned'
+    disadvantage = true
+
+  if advantage and disadvantage
+    advantage = false
+    disadvantage = false
+
+  roll_result = $dice.roll 'd20', {advantage, disadvantage}
+  total = roll_result.value + modifier
+
+  {
+    success:  total >= dc
+    total:    total
+    roll:     roll_result.value
+    rolls:    roll_result.rolls
+    modifier: modifier
+    dc:       dc
+    margin:   total - dc
+    type:     roll_result.type
+  }
+
+method attack
+  using send
+  vars facts
+  args attacker, target, weapon = null
+
+  attack_mod = 0
+  damage_dice = 'd4'
+  damage_type = 'bludgeoning'
+
+  if weapon?
+    weapon_damage = send facts, 'get', weapon, 'damage'
+    damage_dice = weapon_damage if weapon_damage?
+
+    weapon_type = send facts, 'get', weapon, 'damage_type'
+    damage_type = weapon_type if weapon_type?
+
+    is_finesse = send facts, 'has', weapon, 'property', 'finesse'
+    is_ranged  = send facts, 'has', weapon, 'property', 'ranged'
+
+    if is_finesse
+      str_mod = @get_modifier attacker, 'str'
+      dex_mod = @get_modifier attacker, 'dex'
+      attack_mod = Math.max str_mod, dex_mod
+    else if is_ranged
+      attack_mod = @get_modifier attacker, 'dex'
+    else
+      attack_mod = @get_modifier attacker, 'str'
+
+    proficient = send facts, 'has', attacker, 'proficiency', 'martial_weapons'
+    proficient = proficient or send facts, 'has', attacker, 'proficiency', weapon
+    if proficient
+      level = @get_stat attacker, 'level'
+      attack_mod += @proficiency_bonus(level ? 1)
+  else
+    attack_mod = @get_modifier attacker, 'str'
+
+  advantage = false
+  disadvantage = false
+
+  if send facts, 'has', attacker, 'condition', 'invisible'
+    advantage = true
+
+  if send facts, 'has', target, 'condition', 'prone'
+    advantage = true
+
+  if send facts, 'has', attacker, 'condition', 'blinded'
+    disadvantage = true
+
+  if send facts, 'has', attacker, 'condition', 'frightened'
+    disadvantage = true
+
+  if send facts, 'has', attacker, 'condition', 'restrained'
+    disadvantage = true
+
+  if advantage and disadvantage
+    advantage = false
+    disadvantage = false
+
+  roll_result = $dice.roll 'd20', {advantage, disadvantage}
+  attack_total = roll_result.value + attack_mod
+
+  target_ac = @get_stat target, 'ac'
+  target_ac = 10 if target_ac < 1
+
+  critical = roll_result.value is 20
+  fumble   = roll_result.value is 1
+  hit      = (attack_total >= target_ac or critical) and not fumble
+
+  damage = 0
+  damage_rolls = []
+
+  if hit
+    damage_result = $dice.roll damage_dice
+    damage_rolls = damage_result.rolls
+    damage = damage_result.value
+
+    if critical
+      crit_result = $dice.roll damage_dice
+      damage_rolls = damage_rolls.concat crit_result.rolls
+      damage += crit_result.value
+
+    if weapon?
+      is_finesse = send facts, 'has', weapon, 'property', 'finesse'
+      is_ranged  = send facts, 'has', weapon, 'property', 'ranged'
+      if is_finesse
+        damage += Math.max(@get_modifier(attacker, 'str'), @get_modifier(attacker, 'dex'))
+      else if is_ranged
+        damage += @get_modifier attacker, 'dex'
+      else
+        damage += @get_modifier attacker, 'str'
+    else
+      damage += @get_modifier attacker, 'str'
+
+    damage = Math.max 1, damage
+
+  {
+    hit:          hit
+    critical:     critical
+    fumble:       fumble
+    attack_roll:  roll_result.value
+    attack_rolls: roll_result.rolls
+    attack_mod:   attack_mod
+    attack_total: attack_total
+    target_ac:    target_ac
+    damage:       damage
+    damage_rolls: damage_rolls
+    damage_type:  damage_type
+    type:         roll_result.type
+  }
+
+method apply_damage
+  using send
+  vars facts
+  args entity, amount, damage_type = 'bludgeoning'
+
+  current_hp = @get_stat entity, 'hp'
+  max_hp     = @get_stat entity, 'max_hp'
+  max_hp     = current_hp if max_hp < 1
+
+  resistance  = send facts, 'has', entity, 'resistance', damage_type
+  immunity    = send facts, 'has', entity, 'immunity', damage_type
+  vulnerable  = send facts, 'has', entity, 'vulnerability', damage_type
+
+  effective = amount
+  effective = 0 if immunity
+  effective = Math.floor(effective / 2) if resistance and not immunity
+  effective = effective * 2 if vulnerable and not immunity
+
+  new_hp = Math.max 0, current_hp - effective
+  send facts, 'set', entity, 'hp', new_hp.toString()
+
+  unconscious = new_hp is 0
+  if unconscious and not send facts, 'has', entity, 'condition', 'unconscious'
+    send facts, 'assert', entity, 'condition', 'unconscious'
+
+  {
+    damage_taken:   effective
+    damage_resisted: amount - effective
+    previous_hp:    current_hp
+    current_hp:     new_hp
+    unconscious:    unconscious
+    immunity:       immunity
+    resistance:     resistance
+    vulnerability:  vulnerable
+  }
+
+method heal
+  using send
+  vars facts
+  args entity, amount
+
+  current_hp = @get_stat entity, 'hp'
+  max_hp     = @get_stat entity, 'max_hp'
+
+  new_hp = Math.min max_hp, current_hp + amount
+  send facts, 'set', entity, 'hp', new_hp.toString()
+
+  if new_hp > 0 and send facts, 'has', entity, 'condition', 'unconscious'
+    send facts, 'retract', entity, 'condition', 'unconscious'
+
+  {
+    healed:      new_hp - current_hp
+    previous_hp: current_hp
+    current_hp:  new_hp
+    max_hp:      max_hp
+  }
+
+method apply_condition
+  using send
+  vars facts
+  args entity, condition, duration = null
+
+  already_has = send facts, 'has', entity, 'condition', condition
+  return {applied: false, reason: 'already has condition'} if already_has
+
+  send facts, 'assert', entity, 'condition', condition
+
+  if duration?
+    send facts, 'set', entity, "condition_duration_#{condition}", duration.toString()
+
+  {applied: true, condition, entity, duration}
+
+method remove_condition
+  using send
+  vars facts
+  args entity, condition
+
+  had_it = send facts, 'has', entity, 'condition', condition
+  return {removed: false, reason: 'did not have condition'} unless had_it
+
+  send facts, 'retract', entity, 'condition', condition
+  send facts, 'retract', entity, "condition_duration_#{condition}", null
+
+  {removed: true, condition, entity}
+
+method has_condition
+  using send
+  vars facts
+  args entity, condition
+
+  send facts, 'has', entity, 'condition', condition
+
+method contest
+  using send
+  vars facts
+  args actor, actor_skill, target, target_skill, options = {}
+
+  actor_result  = @check actor, actor_skill, 0, options
+  target_result = @check target, target_skill, 0, options
+
+  actor_wins = actor_result.total > target_result.total
+
+  {
+    winner:        if actor_wins then actor else target
+    loser:         if actor_wins then target else actor
+    actor_total:   actor_result.total
+    target_total:  target_result.total
+    margin:        Math.abs(actor_result.total - target_result.total)
+    tie:           actor_result.total is target_result.total
+    actor_result:  actor_result
+    target_result: target_result
+  }
+
+method initiative
+  using send
+  vars facts
+  args entities
+
+  results = []
+
+  for entity in entities
+    dex_mod = @get_modifier entity, 'dex'
+    roll_result = $dice.roll 'd20'
+    total = roll_result.value + dex_mod
+
+    results.push {
+      entity:   entity
+      total:    total
+      roll:     roll_result.value
+      modifier: dex_mod
+    }
+
+  results.sort (a, b) ->
+    if b.total isnt a.total
+      b.total - a.total
+    else
+      b.modifier - a.modifier
+
+  results
+

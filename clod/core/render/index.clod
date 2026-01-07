@@ -1,0 +1,341 @@
+# Narrative renderer for ClodMUD
+# v0.1.0
+#
+# Translates action results into evocative prose via LLM.
+# The server knows facts changed - the LLM describes what that means.
+
+object $render_module
+parent $root
+
+default_parent $render_module
+
+method module_info
+  version:  'v0.1.0'
+  name:     'render'
+  contents: ['$renderer']
+
+
+object $renderer
+parent $root
+
+method init_renderer
+  vars facts, pending_result, pending_subject, style, narrative_handler
+
+  facts             = null
+  pending_result    = null
+  pending_subject   = null
+  style             = 'classic'
+  narrative_handler = null
+
+method configure
+  vars facts, style, narrative_handler
+  args options
+
+  facts             = options.facts             if options.facts?
+  style             = options.style             if options.style?
+  narrative_handler = options.narrative_handler if options.narrative_handler?
+
+method render
+  using llm_complete, send
+  vars facts, pending_result, pending_subject
+  args result, subject
+
+  pending_result  = result
+  pending_subject = subject
+
+  context = @gather_context result, subject
+  prompt  = @build_prompt result, context
+
+  llm_complete {prompt}
+
+method gather_context
+  using send
+  vars facts
+  args result, subject
+
+  context = {
+    subject_facts: []
+    location_facts: []
+    affected_entities: []
+  }
+
+  subject_facts = send facts, 'about', subject
+  context.subject_facts = subject_facts.map (f) ->
+    "#{f.subject} #{f.predicate} #{f.object}"
+
+  location = null
+  for fact in subject_facts
+    if fact.predicate is 'location'
+      location = fact.object
+      break
+
+  if location?
+    location_about = send facts, 'about', location
+    context.location_facts = location_about.map (f) ->
+      "#{f.subject} #{f.predicate} #{f.object}"
+
+    things_here = send facts, 'subjects_where', 'location', location
+    context.things_here = things_here
+
+  if result.operations?
+    entities = new Set()
+    for op in result.operations
+      entities.add op.s if op.s?
+      entities.add op.o if op.o?
+      entities.add op.entity if op.entity?
+
+    for entity from entities
+      continue if entity is subject or entity is location
+      entity_facts = send facts, 'about', entity
+      context.affected_entities.push {
+        id: entity
+        facts: entity_facts.map (f) -> "#{f.subject} #{f.predicate} #{f.object}"
+      }
+
+  context
+
+method build_prompt
+  vars style
+  args result, context
+
+  lines = []
+
+  lines.push "You are a narrator for a text adventure game."
+  lines.push "Write evocative, second-person prose describing what just happened."
+  lines.push ""
+
+  if style is 'classic'
+    lines.push "Style: Classic interactive fiction (Infocom-era). Concise but atmospheric."
+  else if style is 'verbose'
+    lines.push "Style: Richly detailed literary prose. Describe senses and emotions."
+  else if style is 'terse'
+    lines.push "Style: Extremely brief. Just the essential facts."
+  else
+    lines.push "Style: #{style}"
+
+  lines.push ""
+  lines.push "About the player:"
+  for fact in context.subject_facts
+    lines.push "  #{fact}"
+
+  if context.location_facts?.length > 0
+    lines.push ""
+    lines.push "About the current location:"
+    for fact in context.location_facts
+      lines.push "  #{fact}"
+
+  if context.things_here?.length > 0
+    lines.push ""
+    lines.push "Things present: #{context.things_here.join ', '}"
+
+  if context.affected_entities?.length > 0
+    lines.push ""
+    lines.push "Affected entities:"
+    for entity in context.affected_entities
+      lines.push "  #{entity.id}:"
+      for fact in entity.facts
+        lines.push "    #{fact}"
+
+  lines.push ""
+  lines.push "What happened:"
+  lines.push "  Success: #{result.success}"
+  lines.push "  Description: #{result.description}"
+
+  if result.operations?.length > 0
+    lines.push "  Changes made:"
+    for op in result.operations
+      if op.op is 'assert'
+        lines.push "    Added: #{op.s} #{op.p} #{op.o}"
+      else if op.op is 'retract'
+        lines.push "    Removed: #{op.s} #{op.p} #{op.o}"
+      else if op.op is 'set'
+        lines.push "    Changed: #{op.s} #{op.p} = #{op.o}"
+      else if op.op is 'fail'
+        lines.push "    Failed: #{op.reason}"
+
+  if result.intent?
+    lines.push ""
+    lines.push "The player's intent was: #{result.intent.verb}"
+    if result.intent.object?
+      lines.push "  Object: #{result.intent.object}"
+    if result.intent.target?
+      lines.push "  Target: #{result.intent.target}"
+    if result.intent.tone?
+      lines.push "  Tone: #{result.intent.tone}"
+
+  lines.push ""
+  lines.push "Write 1-3 sentences of narrative prose. Do not include any JSON or metadata."
+  lines.push "Use second person (\"you\"). Focus on what the player experiences."
+  lines.push ""
+  lines.push "IMPORTANT: Never speak for the player. Do not describe their emotions,"
+  lines.push "sighs, grunts, thoughts, or reactions. Only describe what happens in"
+  lines.push "the world - objects, environments, sounds, what they see or feel physically."
+  lines.push "The player decides how their character reacts."
+  lines.push ""
+  lines.push "If the action failed, describe why in a natural way."
+  lines.push "If successful, describe the result vividly but concisely."
+
+  lines.join '\n'
+
+method completed
+  using send
+  vars pending_result, pending_subject, narrative_handler
+  args response
+
+  content = response.choices?[0]?.message?.content
+  text = if content?
+    t = content.trim()
+    t.replace /^["']|["']$/g, ''
+  else
+    @format_fallback pending_result
+
+  narrative = {
+    text:    text
+    result:  pending_result
+    subject: pending_subject
+  }
+
+  if narrative_handler?
+    send narrative_handler, 'receive_narrative', narrative
+
+  narrative
+
+method error
+  using send
+  vars pending_result, pending_subject, narrative_handler
+  args err
+
+  narrative = {
+    text:    @format_fallback pending_result
+    result:  pending_result
+    subject: pending_subject
+    error:   err.message
+  }
+
+  if narrative_handler?
+    send narrative_handler, 'receive_narrative', narrative
+
+  narrative
+
+method stream
+  args chunk
+
+method format_fallback
+  args result
+
+  return "Something happened." unless result?
+
+  if result.success
+    result.description ? "Done."
+  else
+    if result.error?
+      "That didn't work: #{result.error}"
+    else
+      result.description ? "You can't do that."
+
+method render_room
+  using llm_complete, send
+  vars facts, pending_result, pending_subject
+  args subject
+
+  pending_result  = {type: 'look'}
+  pending_subject = subject
+
+  context = @gather_room_context subject
+  prompt  = @build_room_prompt context
+
+  llm_complete {prompt}
+
+method gather_room_context
+  using send
+  vars facts
+  args subject
+
+  context = {
+    subject_name: null
+    location: null
+    location_name: null
+    location_desc: null
+    contents: []
+    exits: []
+  }
+
+  subject_facts = send facts, 'about', subject
+  for fact in subject_facts
+    if fact.predicate is 'name'
+      context.subject_name = fact.object
+    if fact.predicate is 'location'
+      context.location = fact.object
+
+  return context unless context.location?
+
+  location_facts = send facts, 'about', context.location
+  for fact in location_facts
+    if fact.subject is context.location
+      if fact.predicate is 'name'
+        context.location_name = fact.object
+      if fact.predicate is 'description'
+        context.location_desc = fact.object
+      if fact.predicate in ['north', 'south', 'east', 'west', 'up', 'down']
+        context.exits.push {direction: fact.predicate, destination: fact.object}
+
+  things_here = send facts, 'subjects_where', 'location', context.location
+  for thing in things_here
+    continue if thing is subject
+    thing_facts = send facts, 'about', thing
+    item = {id: thing, name: null, type: null}
+    for fact in thing_facts
+      if fact.subject is thing
+        item.name = fact.object if fact.predicate is 'name'
+        item.type = fact.object if fact.predicate is 'type'
+    context.contents.push item
+
+  context
+
+method build_room_prompt
+  vars style
+  args context
+
+  lines = []
+
+  lines.push "You are a narrator for a text adventure game."
+  lines.push "Describe the current location in second person."
+  lines.push ""
+
+  if style is 'classic'
+    lines.push "Style: Classic interactive fiction. A short title, then 2-4 sentences."
+  else if style is 'verbose'
+    lines.push "Style: Rich and atmospheric. 3-6 sentences with sensory details."
+  else
+    lines.push "Style: #{style ? 'classic'}"
+
+  lines.push ""
+  lines.push "Location: #{context.location_name ? context.location}"
+
+  if context.location_desc?
+    lines.push "Base description: #{context.location_desc}"
+
+  if context.contents.length > 0
+    lines.push ""
+    lines.push "Things here:"
+    for item in context.contents
+      desc = item.name ? item.id
+      desc += " (#{item.type})" if item.type?
+      lines.push "  - #{desc}"
+
+  if context.exits.length > 0
+    lines.push ""
+    lines.push "Exits:"
+    for exit in context.exits
+      lines.push "  - #{exit.direction} -> #{exit.destination}"
+
+  lines.push ""
+  lines.push "Write the room description. Start with the location name in bold or caps."
+  lines.push "Describe what the player sees, including notable objects."
+  lines.push "Mention obvious exits naturally in the prose."
+  lines.push ""
+  lines.push "Never speak for the player - no emotions, thoughts, or reactions."
+  lines.push "Only describe the environment and what can be perceived."
+
+  lines.join '\n'
+

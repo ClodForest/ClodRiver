@@ -393,3 +393,151 @@ test 'BIF integration: $sys.create with name from core.clod', ->
   assert.ok obj?
   assert.strictEqual core.toobj('$test_obj'), obj
   assert.strictEqual core.call(obj, 'root_name'), 'test_obj'
+
+test 'BIF: connect_llm', ->
+  core = new Core()
+  $sys = core.toobj '$sys'
+  $root = core.toobj '$root'
+  delegate = core.create $root
+
+  core.addMethod $sys, 'test_connect_llm', (connect_llm) ->
+    (ctx, args) ->
+      [delegateObj, config] = args
+      connect_llm delegateObj, config
+
+  config = {baseURL: 'http://test:1234/v1', model: 'test-model'}
+  result = core.call $sys, 'test_connect_llm', [delegate, config]
+
+  assert.strictEqual result, delegate
+  assert.ok delegate._llmConfig?
+  assert.strictEqual delegate._llmConfig.baseURL, 'http://test:1234/v1'
+  assert.strictEqual delegate._llmConfig.model, 'test-model'
+
+test 'BIF: connect_llm requires $sys', ->
+  core = new Core()
+  $root = core.toobj '$root'
+  obj = core.create $root
+  delegate = core.create $root
+
+  core.addMethod obj, 'bad_connect', (connect_llm) ->
+    (ctx, args) ->
+      connect_llm delegate, {model: 'test'}
+
+  try
+    core.call obj, 'bad_connect'
+    assert.fail 'Should have thrown error'
+  catch error
+    assert.match error.message, /can only be called on \$sys/
+
+test 'BIF: connect_llm uses defaults', ->
+  core = new Core()
+  $sys = core.toobj '$sys'
+  $root = core.toobj '$root'
+  delegate = core.create $root
+
+  core.addMethod $sys, 'test_connect_llm', (connect_llm) ->
+    (ctx, args) ->
+      [delegateObj, config] = args
+      connect_llm delegateObj, config
+
+  core.call $sys, 'test_connect_llm', [delegate, {}]
+
+  assert.strictEqual delegate._llmConfig.baseURL, 'http://localhost:11434/v1'
+  assert.strictEqual delegate._llmConfig.model, 'llama3.1:8b'
+  assert.strictEqual delegate._llmConfig.apiKey, null
+
+test 'BIF: llm_complete requires LLM delegate', ->
+  core = new Core()
+  $root = core.toobj '$root'
+  obj = core.create $root
+
+  core.addMethod obj, 'bad_complete', (llm_complete) ->
+    (ctx, args) ->
+      llm_complete {prompt: 'test'}
+
+  try
+    core.call obj, 'bad_complete'
+    assert.fail 'Should have thrown error'
+  catch error
+    assert.match error.message, /non-LLM delegate/
+
+test 'BIF: llm_complete calls completed callback', (t, done) ->
+  core = new Core()
+  $sys = core.toobj '$sys'
+  $root = core.toobj '$root'
+  delegate = core.create $root
+
+  mockResponse = {
+    choices: [{message: {role: 'assistant', content: 'Hello!'}}]
+  }
+
+  originalFetch = global.fetch
+  global.fetch = (url, options) ->
+    Promise.resolve {
+      ok: true
+      json: -> Promise.resolve mockResponse
+    }
+
+  core.addMethod $sys, 'setup', (connect_llm) ->
+    (ctx, args) ->
+      [d] = args
+      connect_llm d, {baseURL: 'http://test', model: 'test'}
+
+  completedData = null
+  core.addMethod delegate, 'completed', (cset) ->
+    (ctx, args) ->
+      [data] = args
+      completedData = data
+
+  core.addMethod delegate, 'do_complete', (llm_complete) ->
+    (ctx, args) ->
+      llm_complete {prompt: 'Hi'}
+
+  core.call $sys, 'setup', [delegate]
+  core.call delegate, 'do_complete'
+
+  setTimeout ->
+    global.fetch = originalFetch
+    assert.ok completedData?
+    assert.strictEqual completedData.choices[0].message.content, 'Hello!'
+    done()
+  , 10
+
+test 'BIF: llm_complete calls error callback on failure', (t, done) ->
+  core = new Core()
+  $sys = core.toobj '$sys'
+  $root = core.toobj '$root'
+  delegate = core.create $root
+
+  originalFetch = global.fetch
+  global.fetch = (url, options) ->
+    Promise.resolve {
+      ok: false
+      status: 500
+      statusText: 'Internal Server Error'
+    }
+
+  core.addMethod $sys, 'setup', (connect_llm) ->
+    (ctx, args) ->
+      [d] = args
+      connect_llm d, {baseURL: 'http://test', model: 'test'}
+
+  errorData = null
+  core.addMethod delegate, 'error', (cset) ->
+    (ctx, args) ->
+      [data] = args
+      errorData = data
+
+  core.addMethod delegate, 'do_complete', (llm_complete) ->
+    (ctx, args) ->
+      llm_complete {prompt: 'Hi'}
+
+  core.call $sys, 'setup', [delegate]
+  core.call delegate, 'do_complete'
+
+  setTimeout ->
+    global.fetch = originalFetch
+    assert.ok errorData?
+    assert.match errorData.message, /500/
+    done()
+  , 10

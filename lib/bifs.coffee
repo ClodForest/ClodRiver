@@ -330,6 +330,107 @@ class BIFs
     delete holder._childCore
     holder
 
+  connect_llm: (ctx, delegate, config) =>
+    $sys = @core.toobj '$sys'
+    if ctx.obj isnt $sys
+      throw new Error "connect_llm() can only be called on $sys"
+
+    delegate._llmConfig = {
+      baseURL:  config.baseURL  ? 'http://localhost:11434/v1'
+      apiKey:   config.apiKey   ? null
+      model:    config.model    ? 'llama3.1:8b'
+    }
+
+    delegate
+
+  llm_complete: (ctx, options) =>
+    delegate = ctx.obj
+
+    unless delegate?._llmConfig?
+      throw new Error "llm_complete() called on non-LLM delegate"
+
+    config = delegate._llmConfig
+
+    messages = options.messages ? [{role: 'user', content: options.prompt}]
+
+    body = {
+      model:    options.model ? config.model
+      messages: messages
+      stream:   options.stream ? false
+    }
+    body.tools       = options.tools       if options.tools?
+    body.temperature = options.temperature if options.temperature?
+
+    headers = {'Content-Type': 'application/json'}
+    headers['Authorization'] = "Bearer #{config.apiKey}" if config.apiKey
+
+    if options.stream
+      @_llmStreamRequest delegate, config, body, headers
+    else
+      @_llmRequest delegate, config, body, headers
+
+    delegate
+
+  _llmRequest: (delegate, config, body, headers) =>
+    fetch "#{config.baseURL}/chat/completions", {
+      method:  'POST'
+      headers: headers
+      body:    JSON.stringify body
+    }
+    .then (response) =>
+      unless response.ok
+        throw new Error "HTTP #{response.status}: #{response.statusText}"
+      response.json()
+    .then (data) =>
+      @core.callIfExists delegate, 'completed', [data]
+    .catch (error) =>
+      @core.callIfExists delegate, 'error', [{message: error.message}]
+
+  _llmStreamRequest: (delegate, config, body, headers) =>
+    fetch "#{config.baseURL}/chat/completions", {
+      method:  'POST'
+      headers: headers
+      body:    JSON.stringify body
+    }
+    .then (response) =>
+      unless response.ok
+        throw new Error "HTTP #{response.status}: #{response.statusText}"
+
+      reader       = response.body.getReader()
+      decoder      = new TextDecoder()
+      buffer       = ''
+      fullResponse = {choices: [{message: {content: '', role: 'assistant'}}]}
+
+      processChunk = =>
+        reader.read().then ({done, value}) =>
+          if done
+            @core.callIfExists delegate, 'completed', [fullResponse]
+            return
+
+          buffer += decoder.decode value, {stream: true}
+          lines   = buffer.split '\n'
+          buffer  = lines.pop()
+
+          for line in lines
+            continue unless line.startsWith 'data: '
+            data = line.slice 6
+            continue if data is '[DONE]'
+
+            try
+              parsed = JSON.parse data
+              if parsed.choices?[0]?.delta?.content?
+                chunk = parsed.choices[0].delta.content
+                fullResponse.choices[0].message.content += chunk
+                @core.callIfExists delegate, 'stream', [chunk]
+            catch e
+              # Skip malformed chunks
+
+          processChunk()
+
+      processChunk()
+    .catch (error) =>
+      @core.callIfExists delegate, 'error', [{message: error.message}]
+
   # Get all BIF names
   @bifNames: ->
     [
@@ -341,7 +442,8 @@ class BIFs
       'compile', 'clod_eval',
       'textdump', 'write_file', 'read_file', 'file_exists', 'list_dir',
       'listen', 'accept', 'emit', 'emit_error', 'attach_stdio',
-      'require', 'load_core', 'core_toobj', 'core_call', 'core_destroy'
+      'require', 'load_core', 'core_toobj', 'core_call', 'core_destroy',
+      'connect_llm', 'llm_complete'
     ]
 
 module.exports = BIFs

@@ -1,0 +1,399 @@
+# Action interpreter for ClodMUD
+# v0.1.0
+#
+# Translates intents into primitive operations via LLM.
+# The server doesn't know what "take" means - the LLM does.
+# The server only knows: assert, retract, set facts.
+
+object $action_module
+parent $root
+
+default_parent $action_module
+
+method module_info
+  version:  'v0.1.0'
+  name:     'action'
+  contents: ['$action_interpreter']
+
+
+object $action_interpreter
+parent $root
+
+method init_action_interpreter
+  vars facts, d20, result_handler, pending_intent, pending_subject
+
+  facts          = null
+  d20            = null
+  result_handler = null
+  pending_intent = null
+  pending_subject = null
+
+method configure
+  vars facts, d20, result_handler
+  args options
+
+  facts          = options.facts          if options.facts?
+  d20            = options.d20            if options.d20?
+  result_handler = options.result_handler if options.result_handler?
+
+method execute
+  using llm_complete, send
+  vars facts, pending_intent, pending_subject, debug
+  args intent, subject
+
+  pending_intent  = intent
+  pending_subject = subject
+
+  context = @gather_context intent
+  prompt  = @build_prompt intent, context
+
+  if debug
+    console.log "\n=== Action Prompt ==="
+    console.log prompt
+    console.log "=== End Prompt ===\n"
+
+  llm_complete {prompt}
+
+method set_debug
+  vars debug
+  args enabled
+
+  debug = enabled
+
+method gather_context
+  using send
+  vars facts
+  args intent
+
+  context = {entities: {}, resolved: {}}
+
+  raw_entities = @extract_entities intent
+
+  for entity in raw_entities
+    resolved = @resolve_entity entity
+    context.resolved[entity] = resolved
+
+    entity_facts = send facts, 'about', resolved
+    context.entities[resolved] = entity_facts.map (f) ->
+      "#{f.subject} #{f.predicate} #{f.object}"
+
+  context
+
+method resolve_entity
+  using send
+  vars facts
+  args name
+
+  return name if name.startsWith '$'
+
+  normalized = name.toLowerCase()
+    .replace(/^(the|a|an)\s+/i, '')
+    .trim()
+
+  candidates = send facts, 'query', {predicate: 'name'}
+  for fact in candidates
+    fact_name = fact.object.toLowerCase()
+    if fact_name.includes(normalized) or normalized.includes(fact_name.split(' ').pop())
+      return fact.subject
+
+  "$#{normalized.replace(/\s+/g, '_')}"
+
+method extract_entities
+  args intent
+
+  entities = []
+
+  if intent.subject?
+    entities.push intent.subject
+
+  if intent.object?
+    entities.push intent.object
+
+  if intent.target?
+    entities.push intent.target
+
+  if intent.type is 'sequence'
+    for sub in intent.intents ? []
+      entities.push @extract_entities(sub)...
+
+  if intent.type is 'conditional'
+    entities.push @extract_entities(intent.try)... if intent.try?
+    entities.push @extract_entities(intent.else)... if intent.else?
+
+  [...new Set entities]
+
+method build_prompt
+  args intent, context
+
+  lines = []
+  lines.push "You are translating a player's intent into primitive database operations."
+  lines.push "The world state is stored as (subject, predicate, object) triples."
+  lines.push ""
+
+  for raw, resolved of context.resolved
+    lines.push "\"#{raw}\" refers to #{resolved}"
+
+  lines.push ""
+  lines.push "Known facts about relevant entities:"
+
+  for entity, entity_facts of context.entities
+    if entity_facts.length > 0
+      lines.push "#{entity}:"
+      for fact in entity_facts
+        lines.push "  #{fact}"
+
+  lines.push ""
+  lines.push "The player's intent:"
+  lines.push JSON.stringify intent, null, 2
+  lines.push ""
+  lines.push "Translate this into primitive operations. Use the resolved entity IDs (like $sword, $player) in your operations."
+  lines.push ""
+  lines.push "Available operations:"
+  lines.push ""
+  lines.push "Fact operations:"
+  lines.push '- {"op": "assert", "s": "<subject>", "p": "<predicate>", "o": "<object>"}'
+  lines.push '- {"op": "retract", "s": "<subject>", "p": "<predicate>", "o": "<object>"}'
+  lines.push '- {"op": "set", "s": "<subject>", "p": "<predicate>", "o": "<object>"}  (replaces any existing value)'
+  lines.push ""
+  lines.push "D20 operations (5e-style mechanics):"
+  lines.push '- {"op": "check", "entity": "<who>", "skill": "<skill>", "dc": <number>}  - skill check'
+  lines.push '- {"op": "save", "entity": "<who>", "ability": "<str/dex/con/int/wis/cha>", "dc": <number>}'
+  lines.push '- {"op": "attack", "attacker": "<who>", "target": "<who>", "weapon": "<weapon or null>"}'
+  lines.push '- {"op": "damage", "entity": "<who>", "amount": <number>, "type": "<damage type>"}'
+  lines.push '- {"op": "heal", "entity": "<who>", "amount": <number>}'
+  lines.push '- {"op": "condition", "entity": "<who>", "condition": "<name>", "action": "apply|remove"}'
+  lines.push '- {"op": "contest", "actor": "<who>", "actor_skill": "<skill>", "target": "<who>", "target_skill": "<skill>"}'
+  lines.push ""
+  lines.push "Movement:"
+  lines.push '- {"op": "move", "entity": "<who>", "direction": "<north/south/east/west/up/down>"}'
+  lines.push ""
+  lines.push "Observation (read-only):"
+  lines.push '- {"op": "describe", "target": "<entity or direction>"}  - describe what the subject sees'
+  lines.push ""
+  lines.push "Control flow:"
+  lines.push '- {"op": "fail", "reason": "<why this cannot be done>"}'
+  lines.push '- {"op": "conditional", "check": <check_op>, "success": [<ops if check passes>], "failure": [<ops if check fails>]}'
+  lines.push ""
+  lines.push "Skills: athletics, acrobatics, stealth, perception, investigation, insight, persuasion, intimidation, deception"
+  lines.push "Damage types: slashing, piercing, bludgeoning, fire, cold, lightning, poison, necrotic, radiant"
+  lines.push "Conditions: blinded, charmed, deafened, frightened, grappled, incapacitated, invisible, paralyzed, poisoned, prone, restrained, stunned, unconscious"
+  lines.push ""
+  lines.push "Consider physical reality: a person can take portable objects, but not heavy furniture."
+  lines.push "Consider prerequisites: to take something, it must be in the same location as the subject."
+  lines.push "Consider consequences: taking something changes its location from the current location to the subject."
+  lines.push "For combat, use attack operations - they handle d20 rolls, modifiers, and damage automatically."
+  lines.push "For risky actions, use skill checks with appropriate DCs (10=easy, 15=medium, 20=hard, 25=very hard)."
+  lines.push ""
+  lines.push "IMPORTANT distinctions:"
+  lines.push "- 'look <direction>' means OBSERVE what's in that direction WITHOUT moving. Query facts about what's there."
+  lines.push "- 'go <direction>' means MOVE in that direction."
+  lines.push "- 'examine <thing>' means look at a specific object or creature for details."
+  lines.push "- Looking does NOT cause movement. Only 'go' causes movement."
+  lines.push ""
+  lines.push "Respond with ONLY a JSON object:"
+  lines.push '{"success": true/false, "operations": [...], "description": "<what happened>"}'
+
+  lines.join '\n'
+
+method completed
+  using send
+  vars facts, result_handler, pending_intent, pending_subject
+  args response
+
+  content = response.choices?[0]?.message?.content
+  result  = @parse_response content
+
+  if result.success and result.operations?
+    @execute_operations result.operations
+
+  result.intent  = pending_intent
+  result.subject = pending_subject
+
+  if result_handler?
+    send result_handler, 'action_completed', result
+
+  result
+
+method error
+  using send
+  vars result_handler, pending_intent, pending_subject
+  args err
+
+  result = {
+    success:     false
+    error:       err.message
+    operations:  []
+    description: "Something went wrong."
+    intent:      pending_intent
+    subject:     pending_subject
+  }
+
+  if result_handler?
+    send result_handler, 'action_completed', result
+
+  result
+
+method stream
+  args chunk
+
+method parse_response
+  args content
+
+  return {success: false, error: 'empty response', operations: []} unless content?
+
+  try
+    jsonStr = @extract_json content
+    JSON.parse jsonStr
+
+  catch e
+    {success: false, error: "parse error: #{e.message}", operations: [], raw: content}
+
+method extract_json
+  args text
+
+  if match = text.match /\{[\s\S]*\}/
+    match[0]
+  else
+    text
+
+method execute_operations
+  using send
+  vars facts, d20
+  args operations
+
+  results = []
+
+  for op in operations
+    switch op.op
+      when 'assert'
+        send facts, 'assert', op.s, op.p, op.o
+        results.push {op: 'assert', success: true, fact: [op.s, op.p, op.o]}
+
+      when 'retract'
+        success = send facts, 'retract', op.s, op.p, op.o
+        results.push {op: 'retract', success, fact: [op.s, op.p, op.o]}
+
+      when 'set'
+        send facts, 'set', op.s, op.p, op.o
+        results.push {op: 'set', success: true, fact: [op.s, op.p, op.o]}
+
+      when 'create'
+        send facts, 'assert', op.entity, 'type', op.type
+        send facts, 'assert', op.entity, 'exists', 'true'
+        results.push {op: 'create', success: true, entity: op.entity}
+
+      when 'destroy'
+        entity_facts = send facts, 'about', op.entity
+        for fact in entity_facts
+          send facts, 'retract', fact.subject, fact.predicate, fact.object
+        results.push {op: 'destroy', success: true, entity: op.entity}
+
+      when 'check'
+        if d20?
+          check_result = send d20, 'check', op.entity, op.skill, op.dc, op.options ? {}
+          results.push {op: 'check', result: check_result, entity: op.entity, skill: op.skill, dc: op.dc}
+        else
+          results.push {op: 'check', success: true, note: 'd20 not configured'}
+
+      when 'save'
+        if d20?
+          save_result = send d20, 'save', op.entity, op.ability, op.dc, op.options ? {}
+          results.push {op: 'save', result: save_result, entity: op.entity, ability: op.ability, dc: op.dc}
+        else
+          results.push {op: 'save', success: true, note: 'd20 not configured'}
+
+      when 'attack'
+        if d20?
+          attack_result = send d20, 'attack', op.attacker, op.target, op.weapon
+          results.push {op: 'attack', result: attack_result, attacker: op.attacker, target: op.target}
+
+          if attack_result.hit and attack_result.damage > 0
+            damage_result = send d20, 'apply_damage', op.target, attack_result.damage, attack_result.damage_type
+            results.push {op: 'damage_applied', result: damage_result, target: op.target}
+        else
+          results.push {op: 'attack', success: true, note: 'd20 not configured'}
+
+      when 'damage'
+        if d20?
+          damage_result = send d20, 'apply_damage', op.entity, op.amount, op.type ? 'bludgeoning'
+          results.push {op: 'damage', result: damage_result, entity: op.entity}
+        else
+          results.push {op: 'damage', success: true, note: 'd20 not configured'}
+
+      when 'heal'
+        if d20?
+          heal_result = send d20, 'heal', op.entity, op.amount
+          results.push {op: 'heal', result: heal_result, entity: op.entity}
+        else
+          results.push {op: 'heal', success: true, note: 'd20 not configured'}
+
+      when 'condition'
+        if d20?
+          if op.action is 'apply'
+            cond_result = send d20, 'apply_condition', op.entity, op.condition, op.duration
+          else
+            cond_result = send d20, 'remove_condition', op.entity, op.condition
+          results.push {op: 'condition', result: cond_result, entity: op.entity, condition: op.condition}
+        else
+          results.push {op: 'condition', success: true, note: 'd20 not configured'}
+
+      when 'contest'
+        if d20?
+          contest_result = send d20, 'contest', op.actor, op.actor_skill, op.target, op.target_skill
+          results.push {op: 'contest', result: contest_result}
+        else
+          results.push {op: 'contest', success: true, note: 'd20 not configured'}
+
+      when 'move'
+        current_loc = send facts, 'get', op.entity, 'location'
+        if current_loc?
+          destination = send facts, 'get', current_loc, op.direction
+          if destination?
+            send facts, 'set', op.entity, 'location', destination
+            results.push {op: 'move', success: true, entity: op.entity, from: current_loc, to: destination, direction: op.direction}
+          else
+            results.push {op: 'move', success: false, reason: "No exit #{op.direction}"}
+        else
+          results.push {op: 'move', success: false, reason: "Entity has no location"}
+
+      when 'describe'
+        target = op.target
+        description = {target, facts: [], contents: []}
+        skip = false
+
+        if target in ['north', 'south', 'east', 'west', 'up', 'down']
+          subject_loc = send facts, 'get', pending_subject, 'location'
+          if subject_loc?
+            destination = send facts, 'get', subject_loc, target
+            if destination?
+              target = destination
+            else
+              results.push {op: 'describe', success: false, reason: "Nothing visible in that direction"}
+              skip = true
+
+        unless skip
+          target_facts = send facts, 'about', target
+          for fact in target_facts
+            description.facts.push "#{fact.subject} #{fact.predicate} #{fact.object}"
+
+          things_there = send facts, 'subjects_where', 'location', target
+          for thing in things_there
+            thing_name = send facts, 'get', thing, 'name'
+            thing_type = send facts, 'get', thing, 'type'
+            description.contents.push {entity: thing, name: thing_name, type: thing_type}
+
+          results.push {op: 'describe', success: true, description}
+
+      when 'conditional'
+        check_results = @execute_operations [op.check]
+        check_passed = check_results[0]?.result?.success ? false
+        results.push {op: 'conditional_check', result: check_results[0]}
+
+        branch_ops = if check_passed then (op.success ? []) else (op.failure ? [])
+        branch_results = @execute_operations branch_ops
+        results.push branch_results...
+
+      when 'fail'
+        results.push {op: 'fail', reason: op.reason}
+
+  results

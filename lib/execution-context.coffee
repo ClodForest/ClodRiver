@@ -66,4 +66,10 @@ class ExecutionContext
   emit: (data) =>
     @core.bifs.emit this, data
 
+  connect_llm: (delegate, config) =>
+    @core.bifs.connect_llm this, delegate, config
+
+  llm_complete: (options) =>
+    @core.bifs.llm_complete this, options
+
 module.exports = ExecutionContext

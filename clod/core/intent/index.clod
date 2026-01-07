@@ -1,0 +1,290 @@
+# Intent representation for ClodMUD
+# v0.1.0
+#
+# Intents represent what a player wants to do, parsed from natural language.
+# The action manager executes intents; the renderer describes results.
+
+object $intent_module
+parent $root
+
+default_parent $intent_module
+
+method module_info
+  version:  'v0.1.0'
+  name:     'intent'
+  contents: ['$intent', '$intent_parser']
+
+
+object $intent
+parent $root
+
+method create_action
+  args verb, subject, object = null, target = null
+  vars confidence
+
+  intent = {
+    type:    'intent'
+    verb:    verb
+    subject: subject
+    confidence: 1.0
+  }
+  intent.object = object if object?
+  intent.target = target if target?
+  intent
+
+method create_sequence
+  args intents
+
+  {
+    type:    'sequence'
+    intents: intents
+  }
+
+method create_conditional
+  args tryIntent, elseIntent
+
+  {
+    type: 'conditional'
+    try:  tryIntent
+    else: elseIntent
+  }
+
+method create_preference
+  args dimension, direction = 'maximize'
+
+  result = {type: 'preference'}
+  result[direction] = dimension
+  result
+
+method create_unknown
+  args raw, reason = 'unrecognized'
+
+  {
+    type:       'unknown'
+    raw:        raw
+    reason:     reason
+    confidence: 0.0
+  }
+
+method with_confidence
+  args intent, confidence
+
+  Object.assign {}, intent, {confidence}
+
+method with_tone
+  args intent, tone
+
+  Object.assign {}, intent, {tone}
+
+method validate
+  args intent
+
+  return {valid: false, error: 'intent is null'} unless intent?
+  return {valid: false, error: 'missing type'} unless intent.type?
+
+  switch intent.type
+    when 'intent'
+      return {valid: false, error: 'missing verb'} unless intent.verb?
+      return {valid: false, error: 'missing subject'} unless intent.subject?
+      {valid: true}
+
+    when 'sequence'
+      return {valid: false, error: 'missing intents array'} unless Array.isArray intent.intents
+      for sub in intent.intents
+        result = @validate sub
+        return result unless result.valid
+      {valid: true}
+
+    when 'conditional'
+      return {valid: false, error: 'missing try clause'} unless intent.try?
+      return {valid: false, error: 'missing else clause'} unless intent.else?
+      tryResult = @validate intent.try
+      return tryResult unless tryResult.valid
+      @validate intent.else
+
+    when 'preference'
+      hasDir = intent.maximize? or intent.minimize?
+      return {valid: false, error: 'preference needs maximize or minimize'} unless hasDir
+      {valid: true}
+
+    when 'unknown'
+      {valid: true}
+
+    else
+      {valid: false, error: "unknown intent type: #{intent.type}"}
+
+method is_action
+  args intent
+
+  intent?.type is 'intent'
+
+method is_sequence
+  args intent
+
+  intent?.type is 'sequence'
+
+method is_conditional
+  args intent
+
+  intent?.type is 'conditional'
+
+method flatten
+  args intent
+
+  return [intent] if @is_action intent
+  return intent.intents.flatMap((i) => @flatten i) if @is_sequence intent
+  return [@flatten(intent.try)..., @flatten(intent.else)...] if @is_conditional intent
+  [intent]
+
+
+object $intent_parser
+parent $root
+
+method init_intent_parser
+  vars available_verbs, pending_subject, intent_handler
+
+  available_verbs  = []
+  pending_subject  = null
+  intent_handler   = null
+
+method configure
+  vars available_verbs, intent_handler
+  args options
+
+  available_verbs = options.available_verbs if options.available_verbs?
+  intent_handler  = options.intent_handler  if options.intent_handler?
+
+method parse
+  using llm_complete
+  vars available_verbs, pending_subject
+  args input, subject
+
+  pending_subject = subject
+  prompt = @build_prompt input, subject
+
+  llm_complete {prompt}
+
+method build_prompt
+  vars available_verbs
+  args input, subject
+
+  verbList = available_verbs.join ', '
+
+  """
+  You are a command interpreter for a text adventure game.
+  Parse the player's input into a structured intent.
+
+  Available verbs: #{verbList}
+
+  The player (#{subject}) said: "#{input}"
+
+  Respond with ONLY valid JSON in this format:
+  {
+    "type": "intent",
+    "verb": "<verb>",
+    "subject": "#{subject}",
+    "object": "<object name or null>",
+    "target": "<target name or null>",
+    "confidence": <0.0-1.0>,
+    "tone": "<neutral|urgent|casual|polite|aggressive>"
+  }
+
+  For multiple actions use:
+  {
+    "type": "sequence",
+    "intents": [...]
+  }
+
+  For conditional actions ("try X, otherwise Y") use:
+  {
+    "type": "conditional",
+    "try": {...},
+    "else": {...}
+  }
+
+  If you cannot parse the input, respond with:
+  {
+    "type": "unknown",
+    "raw": "#{input}",
+    "reason": "<explanation>",
+    "confidence": 0.0
+  }
+  """
+
+method handle_response
+  args response
+
+  try
+    content = response.choices?[0]?.message?.content
+    return $intent.create_unknown content, 'empty response' unless content?
+
+    jsonStr = @extract_json content
+    intent  = JSON.parse jsonStr
+
+    intent = @normalize_intent intent
+
+    result = $intent.validate intent
+    return $intent.create_unknown content, result.error unless result.valid
+
+    intent
+
+  catch e
+    $intent.create_unknown response, "parse error: #{e.message}"
+
+method normalize_intent
+  args intent
+
+  if intent.verb? and not intent.type?
+    intent.type = 'intent'
+
+  if intent.intents? and not intent.type?
+    intent.type = 'sequence'
+
+  if intent.try? and intent.else? and not intent.type?
+    intent.type = 'conditional'
+
+  intent.confidence ?= 0.8 if intent.type is 'intent'
+
+  if intent.type is 'sequence'
+    intent.intents = intent.intents.map (i) => @normalize_intent i
+
+  if intent.type is 'conditional'
+    intent.try  = @normalize_intent intent.try  if intent.try?
+    intent.else = @normalize_intent intent.else if intent.else?
+
+  intent
+
+method extract_json
+  args text
+
+  if match = text.match /\{[\s\S]*\}/
+    match[0]
+  else
+    text
+
+method completed
+  using send
+  vars intent_handler, pending_subject
+  args response
+
+  intent = @handle_response response
+
+  if intent_handler?
+    send intent_handler, 'receive_intent', intent, pending_subject
+
+  intent
+
+method error
+  using send
+  vars intent_handler, pending_subject
+  args err
+
+  intent = $intent.create_unknown '', "LLM error: #{err.message}"
+
+  if intent_handler?
+    send intent_handler, 'receive_intent', intent, pending_subject
+
+  intent
+
+method stream
+  args chunk

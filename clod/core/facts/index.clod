@@ -1,0 +1,259 @@
+# Semantic triple store for ClodMUD
+# v0.1.0
+#
+# Facts are (subject, predicate, object) triples.
+# The server knows nothing about "take" or "inventory" -
+# it only knows facts and how to query them.
+# Meaning lives in the LLM, not here.
+
+object $facts_module
+parent $root
+
+default_parent $facts_module
+
+method module_info
+  version:  'v0.1.0'
+  name:     'facts'
+  contents: ['$facts']
+
+
+object $facts
+parent $root
+
+method init_facts
+  vars triples, indexes, listeners
+
+  triples   = []
+  indexes   = {by_subject: {}, by_predicate: {}, by_object: {}}
+  listeners = []
+
+method assert
+  using send
+  vars triples, indexes, listeners
+  args subject, predicate, object
+
+  triples   ?= []
+  indexes   ?= {by_subject: {}, by_predicate: {}, by_object: {}}
+  listeners ?= []
+
+  exists = triples.some (f) ->
+    f.subject is subject and f.predicate is predicate and f.object is object
+
+  return false if exists
+
+  fact = {subject, predicate, object}
+  triples.push fact
+
+  indexes.by_subject[subject]     ?= []
+  indexes.by_predicate[predicate] ?= []
+  indexes.by_object[object]       ?= []
+
+  indexes.by_subject[subject].push fact
+  indexes.by_predicate[predicate].push fact
+  indexes.by_object[object].push fact
+
+  for listener in listeners when listener?
+    if typeof listener is 'function'
+      listener 'assert', fact
+    else
+      send listener, 'fact_changed', 'assert', fact
+
+  true
+
+method retract
+  using send
+  vars triples, indexes, listeners
+  args subject, predicate, object
+
+  triples   ?= []
+  indexes   ?= {by_subject: {}, by_predicate: {}, by_object: {}}
+  listeners ?= []
+
+  idx = triples.findIndex (f) ->
+    f.subject is subject and f.predicate is predicate and f.object is object
+
+  return false if idx is -1
+
+  fact = triples[idx]
+  triples.splice idx, 1
+
+  for arr in [indexes.by_subject[subject], indexes.by_predicate[predicate], indexes.by_object[object]]
+    continue unless arr?
+    i = arr.indexOf fact
+    arr.splice i, 1 if i >= 0
+
+  for listener in listeners when listener?
+    if typeof listener is 'function'
+      listener 'retract', fact
+    else
+      send listener, 'fact_changed', 'retract', fact
+
+  true
+
+method has
+  vars triples
+  args subject, predicate, object
+
+  triples ?= []
+
+  triples.some (f) ->
+    f.subject is subject and f.predicate is predicate and f.object is object
+
+method query
+  vars triples, indexes
+  args pattern = {}
+
+  triples ?= []
+  indexes ?= {by_subject: {}, by_predicate: {}, by_object: {}}
+
+  {subject, predicate, object} = pattern
+
+  if subject? and not predicate? and not object?
+    return indexes.by_subject[subject] ? []
+
+  if predicate? and not subject? and not object?
+    return indexes.by_predicate[predicate] ? []
+
+  if object? and not subject? and not predicate?
+    return indexes.by_object[object] ? []
+
+  triples.filter (f) ->
+    (not subject?   or f.subject   is subject) and
+    (not predicate? or f.predicate is predicate) and
+    (not object?    or f.object    is object)
+
+method about
+  vars indexes
+  args entity
+
+  indexes ?= {by_subject: {}, by_predicate: {}, by_object: {}}
+
+  as_subject = indexes.by_subject[entity] ? []
+  as_object  = indexes.by_object[entity]  ? []
+
+  [...as_subject, ...as_object]
+
+method get
+  args subject, predicate
+
+  results = @query {subject, predicate}
+  results[0]?.object ? null
+
+method get_all
+  args subject, predicate
+
+  results = @query {subject, predicate}
+  results.map (f) -> f.object
+
+method subjects_where
+  args predicate, object
+
+  results = @query {predicate, object}
+  results.map (f) -> f.subject
+
+method set
+  args subject, predicate, object
+
+  existing = @query {subject, predicate}
+  for fact in existing
+    @retract fact.subject, fact.predicate, fact.object
+
+  @assert subject, predicate, object
+
+method all
+  vars triples
+
+  triples ?= []
+  [...triples]
+
+method count
+  vars triples
+
+  triples ?= []
+  triples.length
+
+method clear
+  vars triples, indexes
+
+  triples ?= []
+  indexes ?= {by_subject: {}, by_predicate: {}, by_object: {}}
+
+  triples.length = 0
+  indexes.by_subject   = {}
+  indexes.by_predicate = {}
+  indexes.by_object    = {}
+
+method on_change
+  vars listeners
+  args callback
+
+  listeners ?= []
+  listeners.push callback
+  listeners.length - 1
+
+method off_change
+  vars listeners
+  args id
+
+  listeners ?= []
+  listeners[id] = null
+
+method _index_add
+  vars indexes
+  args fact
+
+  indexes ?= {by_subject: {}, by_predicate: {}, by_object: {}}
+
+  {subject, predicate, object} = fact
+
+  indexes.by_subject[subject]     ?= []
+  indexes.by_predicate[predicate] ?= []
+  indexes.by_object[object]       ?= []
+
+  indexes.by_subject[subject].push fact
+  indexes.by_predicate[predicate].push fact
+  indexes.by_object[object].push fact
+
+method _index_remove
+  vars indexes
+  args fact
+
+  indexes ?= {by_subject: {}, by_predicate: {}, by_object: {}}
+
+  {subject, predicate, object} = fact
+
+  for idx in [indexes.by_subject[subject], indexes.by_predicate[predicate], indexes.by_object[object]]
+    continue unless idx?
+    i = idx.indexOf fact
+    idx.splice i, 1 if i >= 0
+
+method _emit
+  using send
+  vars listeners
+  args event_type, fact
+
+  listeners ?= []
+
+  for listener in listeners when listener?
+    if typeof listener is 'function'
+      listener event_type, fact
+    else
+      send listener, 'fact_changed', event_type, fact
+
+method dump
+  vars triples
+
+  triples ?= []
+
+  lines = []
+  for {subject, predicate, object} in triples
+    lines.push "#{subject} #{predicate} #{object}"
+  lines.join '\n'
+
+method load_dump
+  args text
+
+  for line in text.split '\n'
+    continue if line.trim() is ''
+    [subject, predicate, object...] = line.split /\s+/
+    @assert subject, predicate, object.join(' ')

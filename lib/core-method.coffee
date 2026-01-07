@@ -46,7 +46,8 @@ class CoreMethod
     ctxBifs = [
       'textdump', 'listen', 'accept', 'emit', 'emit_error', 'attach_stdio',
       'require', 'load_core', 'core_toobj', 'core_call', 'core_destroy',
-      'list_methods', 'children', 'parent'
+      'list_methods', 'children', 'parent',
+      'connect_llm', 'llm_complete'
     ]
 
     imports = []
