@@ -141,10 +141,11 @@ object $intent_parser
 parent $root
 
 method init_intent_parser
-  vars available_verbs, pending_subject, intent_handler
+  vars available_verbs, pending_subject, pending_context, intent_handler
 
   available_verbs  = []
   pending_subject  = null
+  pending_context  = {}
   intent_handler   = null
 
 method configure
@@ -156,27 +157,41 @@ method configure
 
 method parse
   using llm_complete
-  vars available_verbs, pending_subject
-  args input, subject
+  vars available_verbs, pending_subject, pending_context
+  args input, subject, context = {}
 
   pending_subject = subject
-  prompt = @build_prompt input, subject
+  pending_context = context
+  prompt = @build_prompt input, subject, context
 
   llm_complete {prompt}
 
 method build_prompt
   vars available_verbs
-  args input, subject
+  args input, subject, context = {}
 
   verbList = available_verbs.join ', '
+
+  transcriptSection = ""
+  if context.transcript?.length > 0
+    lines = []
+    for entry in context.transcript
+      lines.push "> #{entry.input}"
+      lines.push entry.output
+      lines.push ""
+    transcriptSection = "\nRecent conversation:\n#{lines.join '\n'}"
 
   """
   You are a command interpreter for a text adventure game.
   Parse the player's input into a structured intent.
 
   Available verbs: #{verbList}
+  #{transcriptSection}
+  The player (#{subject}) now says: "#{input}"
 
-  The player (#{subject}) said: "#{input}"
+  Use the conversation history to understand context. If the player was just
+  talking to someone and says something like "ask him about X" or "say hello",
+  the target is the person they were talking to.
 
   Respond with ONLY valid JSON in this format:
   {
@@ -218,7 +233,8 @@ method handle_response
     content = response.choices?[0]?.message?.content
     return $intent.create_unknown content, 'empty response' unless content?
 
-    jsonStr = @extract_json content
+    cleaned = @strip_think_tags content
+    jsonStr = @extract_json cleaned
     intent  = JSON.parse jsonStr
 
     intent = @normalize_intent intent
@@ -230,6 +246,11 @@ method handle_response
 
   catch e
     $intent.create_unknown response, "parse error: #{e.message}"
+
+method strip_think_tags
+  args text
+
+  text?.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim()
 
 method normalize_intent
   args intent
@@ -264,25 +285,25 @@ method extract_json
 
 method completed
   using send
-  vars intent_handler, pending_subject
+  vars intent_handler, pending_subject, pending_context
   args response
 
   intent = @handle_response response
 
   if intent_handler?
-    send intent_handler, 'receive_intent', intent, pending_subject
+    send intent_handler, 'receive_intent', intent, pending_subject, pending_context
 
   intent
 
 method error
   using send
-  vars intent_handler, pending_subject
+  vars intent_handler, pending_subject, pending_context
   args err
 
   intent = $intent.create_unknown '', "LLM error: #{err.message}"
 
   if intent_handler?
-    send intent_handler, 'receive_intent', intent, pending_subject
+    send intent_handler, 'receive_intent', intent, pending_subject, pending_context
 
   intent
 

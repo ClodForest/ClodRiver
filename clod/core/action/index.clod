@@ -20,13 +20,14 @@ object $action_interpreter
 parent $root
 
 method init_action_interpreter
-  vars facts, d20, result_handler, pending_intent, pending_subject
+  vars facts, d20, result_handler, pending_intent, pending_subject, pending_context
 
-  facts          = null
-  d20            = null
-  result_handler = null
-  pending_intent = null
+  facts           = null
+  d20             = null
+  result_handler  = null
+  pending_intent  = null
   pending_subject = null
+  pending_context = {}
 
 method configure
   vars facts, d20, result_handler
@@ -38,14 +39,15 @@ method configure
 
 method execute
   using llm_complete, send
-  vars facts, pending_intent, pending_subject, debug
-  args intent, subject
+  vars facts, pending_intent, pending_subject, pending_context, debug
+  args intent, subject, gameContext = {}
 
   pending_intent  = intent
   pending_subject = subject
+  pending_context = gameContext
 
   context = @gather_context intent
-  prompt  = @build_prompt intent, context
+  prompt  = @build_prompt intent, context, gameContext
 
   if debug
     console.log "\n=== Action Prompt ==="
@@ -123,12 +125,29 @@ method extract_entities
   [...new Set entities]
 
 method build_prompt
-  args intent, context
+  args intent, context, gameContext = {}
 
   lines = []
-  lines.push "You are translating a player's intent into primitive database operations."
-  lines.push "The world state is stored as (subject, predicate, object) triples."
-  lines.push ""
+
+  [
+    "You are translating a player's intent into primitive database operations."
+    "The world state is stored as (subject, predicate, object) triples."
+    ""
+  ].forEach (line) -> lines.push line
+
+  if intent.type is 'sequence'
+    [
+      "IMPORTANT: This is a SEQUENCE of #{intent.intents?.length ? 0} intents. You MUST generate operations for EACH intent in the sequence."
+      "Do not skip any intent. Process them in order and include operations for ALL of them."
+      ""
+    ].forEach (line) -> lines.push line
+
+  if gameContext.transcript?.length > 0
+    lines.push "Recent conversation (for context):"
+    for entry in gameContext.transcript
+      lines.push "> #{entry.input}"
+      lines.push "  #{entry.output.split('\n')[0]}..."
+    lines.push ""
 
   for raw, resolved of context.resolved
     lines.push "\"#{raw}\" refers to #{resolved}"
@@ -142,62 +161,80 @@ method build_prompt
       for fact in entity_facts
         lines.push "  #{fact}"
 
-  lines.push ""
-  lines.push "The player's intent:"
-  lines.push JSON.stringify intent, null, 2
-  lines.push ""
-  lines.push "Translate this into primitive operations. Use the resolved entity IDs (like $sword, $player) in your operations."
-  lines.push ""
-  lines.push "Available operations:"
-  lines.push ""
-  lines.push "Fact operations:"
-  lines.push '- {"op": "assert", "s": "<subject>", "p": "<predicate>", "o": "<object>"}'
-  lines.push '- {"op": "retract", "s": "<subject>", "p": "<predicate>", "o": "<object>"}'
-  lines.push '- {"op": "set", "s": "<subject>", "p": "<predicate>", "o": "<object>"}  (replaces any existing value)'
-  lines.push ""
-  lines.push "D20 operations (5e-style mechanics):"
-  lines.push '- {"op": "check", "entity": "<who>", "skill": "<skill>", "dc": <number>}  - skill check'
-  lines.push '- {"op": "save", "entity": "<who>", "ability": "<str/dex/con/int/wis/cha>", "dc": <number>}'
-  lines.push '- {"op": "attack", "attacker": "<who>", "target": "<who>", "weapon": "<weapon or null>"}'
-  lines.push '- {"op": "damage", "entity": "<who>", "amount": <number>, "type": "<damage type>"}'
-  lines.push '- {"op": "heal", "entity": "<who>", "amount": <number>}'
-  lines.push '- {"op": "condition", "entity": "<who>", "condition": "<name>", "action": "apply|remove"}'
-  lines.push '- {"op": "contest", "actor": "<who>", "actor_skill": "<skill>", "target": "<who>", "target_skill": "<skill>"}'
-  lines.push ""
-  lines.push "Movement:"
-  lines.push '- {"op": "move", "entity": "<who>", "direction": "<north/south/east/west/up/down>"}'
-  lines.push ""
-  lines.push "Observation (read-only):"
-  lines.push '- {"op": "describe", "target": "<entity or direction>"}  - describe what the subject sees'
-  lines.push ""
-  lines.push "Control flow:"
-  lines.push '- {"op": "fail", "reason": "<why this cannot be done>"}'
-  lines.push '- {"op": "conditional", "check": <check_op>, "success": [<ops if check passes>], "failure": [<ops if check fails>]}'
-  lines.push ""
-  lines.push "Skills: athletics, acrobatics, stealth, perception, investigation, insight, persuasion, intimidation, deception"
-  lines.push "Damage types: slashing, piercing, bludgeoning, fire, cold, lightning, poison, necrotic, radiant"
-  lines.push "Conditions: blinded, charmed, deafened, frightened, grappled, incapacitated, invisible, paralyzed, poisoned, prone, restrained, stunned, unconscious"
-  lines.push ""
-  lines.push "Consider physical reality: a person can take portable objects, but not heavy furniture."
-  lines.push "Consider prerequisites: to take something, it must be in the same location as the subject."
-  lines.push "Consider consequences: taking something changes its location from the current location to the subject."
-  lines.push "For combat, use attack operations - they handle d20 rolls, modifiers, and damage automatically."
-  lines.push "For risky actions, use skill checks with appropriate DCs (10=easy, 15=medium, 20=hard, 25=very hard)."
-  lines.push ""
-  lines.push "IMPORTANT distinctions:"
-  lines.push "- 'look <direction>' means OBSERVE what's in that direction WITHOUT moving. Query facts about what's there."
-  lines.push "- 'go <direction>' means MOVE in that direction."
-  lines.push "- 'examine <thing>' means look at a specific object or creature for details."
-  lines.push "- Looking does NOT cause movement. Only 'go' causes movement."
-  lines.push ""
-  lines.push "Respond with ONLY a JSON object:"
-  lines.push '{"success": true/false, "operations": [...], "description": "<what happened>"}'
+  [
+    ""
+    "The player's intent:"
+    JSON.stringify intent, null, 2
+    ""
+    "Translate this into primitive operations. Use the resolved entity IDs (like $sword, $player) in your operations."
+    ""
+    "Available operations:"
+    ""
+    "Fact operations:"
+    '- {"op": "assert", "s": "<subject>", "p": "<predicate>", "o": "<object>"}'
+    '- {"op": "retract", "s": "<subject>", "p": "<predicate>", "o": "<object>"}'
+    '- {"op": "set", "s": "<subject>", "p": "<predicate>", "o": "<object>"}  (replaces any existing value)'
+    ""
+    "D20 operations (5e-style mechanics):"
+    '- {"op": "check", "entity": "<who>", "skill": "<skill>", "dc": <number>}  - skill check'
+    '- {"op": "save", "entity": "<who>", "ability": "<str/dex/con/int/wis/cha>", "dc": <number>}'
+    '- {"op": "attack", "attacker": "<who>", "target": "<who>", "weapon": "<weapon or null>"}'
+    '- {"op": "damage", "entity": "<who>", "amount": <number>, "type": "<damage type>"}'
+    '- {"op": "heal", "entity": "<who>", "amount": <number>}'
+    '- {"op": "condition", "entity": "<who>", "condition": "<name>", "action": "apply|remove"}'
+    '- {"op": "contest", "actor": "<who>", "actor_skill": "<skill>", "target": "<who>", "target_skill": "<skill>"}'
+    ""
+    "Movement:"
+    '- {"op": "move", "entity": "<who>", "direction": "<north/south/east/west/up/down>"}'
+    ""
+    "Observation (read-only):"
+    '- {"op": "describe", "target": "<entity or direction>"}  - describe what the subject sees'
+    ""
+    "Dialogue (talk/say/ask intents):"
+    "For conversation, use assert/set to record what was said and learned:"
+    '- {"op": "set", "s": "<speaker>", "p": "said", "o": "<what they said>"}'
+    '- {"op": "set", "s": "<speaker>", "p": "told_name", "o": "<name they gave>"}'
+    '- {"op": "set", "s": "<entity>", "p": "known_as", "o": "<name learned>"}'
+    '- {"op": "set", "s": "<entity>", "p": "mood", "o": "<friendly/hostile/neutral/etc>"}'
+    "When an NPC is asked something, INVENT a reasonable response based on their personality."
+    "Record any new information as facts (names, relationships, rumors, quests, etc)."
+    "The description field MUST include the NPC's actual spoken response."
+    ""
+    "Example for 'say hello to barkeep':"
+    '{"success": true, "operations": ['
+    '  {"op": "set", "s": "$player", "p": "said", "o": "hello"},'
+    '  {"op": "set", "s": "$barkeep", "p": "said", "o": "Well met, traveler. What can I get ya?"}'
+    '], "description": "You greet the barkeep. He looks up from his mug-polishing and replies, \\"Well met, traveler. What can I get ya?\\""}'
+    ""
+    "Control flow:"
+    '- {"op": "fail", "reason": "<why this cannot be done>"}'
+    '- {"op": "conditional", "check": <check_op>, "success": [<ops if check passes>], "failure": [<ops if check fails>]}'
+    ""
+    "Skills: athletics, acrobatics, stealth, perception, investigation, insight, persuasion, intimidation, deception"
+    "Damage types: slashing, piercing, bludgeoning, fire, cold, lightning, poison, necrotic, radiant"
+    "Conditions: blinded, charmed, deafened, frightened, grappled, incapacitated, invisible, paralyzed, poisoned, prone, restrained, stunned, unconscious"
+    ""
+    "Consider physical reality: a person can take portable objects, but not heavy furniture."
+    "Consider prerequisites: to take something, it must be in the same location as the subject."
+    "Consider consequences: taking something changes its location from the current location to the subject."
+    "For combat, use attack operations - they handle d20 rolls, modifiers, and damage automatically."
+    "For risky actions, use skill checks with appropriate DCs (10=easy, 15=medium, 20=hard, 25=very hard)."
+    ""
+    "IMPORTANT distinctions:"
+    "- 'look <direction>' means OBSERVE what's in that direction WITHOUT moving. Query facts about what's there."
+    "- 'go <direction>' means MOVE in that direction."
+    "- 'examine <thing>' means look at a specific object or creature for details."
+    "- Looking does NOT cause movement. Only 'go' causes movement."
+    ""
+    "Respond with ONLY a JSON object:"
+    '{"success": true/false, "operations": [...], "description": "<what happened>"}'
+  ].forEach (line) -> lines.push line
 
   lines.join '\n'
 
 method completed
   using send
-  vars facts, result_handler, pending_intent, pending_subject
+  vars facts, result_handler, pending_intent, pending_subject, pending_context
   args response
 
   content = response.choices?[0]?.message?.content
@@ -210,13 +247,13 @@ method completed
   result.subject = pending_subject
 
   if result_handler?
-    send result_handler, 'action_completed', result
+    send result_handler, 'action_completed', result, pending_context
 
   result
 
 method error
   using send
-  vars result_handler, pending_intent, pending_subject
+  vars result_handler, pending_intent, pending_subject, pending_context
   args err
 
   result = {
@@ -229,7 +266,7 @@ method error
   }
 
   if result_handler?
-    send result_handler, 'action_completed', result
+    send result_handler, 'action_completed', result, pending_context
 
   result
 
@@ -242,11 +279,17 @@ method parse_response
   return {success: false, error: 'empty response', operations: []} unless content?
 
   try
-    jsonStr = @extract_json content
+    cleaned = @strip_think_tags content
+    jsonStr = @extract_json cleaned
     JSON.parse jsonStr
 
   catch e
     {success: false, error: "parse error: #{e.message}", operations: [], raw: content}
+
+method strip_think_tags
+  args text
+
+  text?.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim()
 
 method extract_json
   args text

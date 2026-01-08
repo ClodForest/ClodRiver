@@ -1,175 +1,41 @@
 #!/usr/bin/env coffee
 
 fs       = require 'node:fs'
+path     = require 'node:path'
 readline = require 'node:readline'
-Core     = require '../lib/core'
-TextDump = require '../lib/text-dump'
-
-LLM_CONFIG =
-  baseURL: process.env.LLM_URL ? 'http://localhost:11435/v1'
-  model:   process.env.LLM_MODEL ? 'hf.co/bartowski/TheDrummer_Precog-24B-v1-GGUF:Q6_K_L'
-
-core = new Core()
-
-$sys  = core.toobj '$sys'
-$root = core.toobj '$root'
-
-core.addMethod $root, 'spawn', (create) ->
-  (ctx, args) ->
-    newObj = create @
-    newObj.init?()
-    newObj
-
-core.addMethod $root, 'init', ->
-  (ctx, args) ->
-
-loadModule = (path) ->
-  source = fs.readFileSync path, 'utf8'
-  dump   = TextDump.fromString source, path
-  dump.apply core
-
-loadModule 'clod/core/facts/index.clod'
-loadModule 'clod/core/intent/index.clod'
-loadModule 'clod/core/action/index.clod'
-loadModule 'clod/core/render/index.clod'
-loadModule 'clod/core/d20/index.clod'
-
-$facts_proto    = core.toobj '$facts'
-$parser_proto   = core.toobj '$intent_parser'
-$action_proto   = core.toobj '$action_interpreter'
-$renderer_proto = core.toobj '$renderer'
-$d20_proto      = core.toobj '$d20'
-$dice           = core.toobj '$dice'
-
-facts    = core.call $facts_proto, 'spawn'
-parser   = core.call $parser_proto, 'spawn'
-action   = core.call $action_proto, 'spawn'
-renderer = core.call $renderer_proto, 'spawn'
-d20      = core.call $d20_proto, 'spawn'
-
-core.addMethod $sys, 'setup', (connect_llm, send) ->
-  (ctx, args) ->
-    connect_llm parser, LLM_CONFIG
-    connect_llm action, LLM_CONFIG
-    connect_llm renderer, LLM_CONFIG
-
-    send parser, 'configure', {
-      available_verbs: [
-        'look', 'examine', 'take', 'drop', 'go', 'open', 'close',
-        'attack', 'cast', 'use', 'give', 'put', 'talk', 'search',
-        'hide', 'sneak', 'climb', 'jump', 'push', 'pull', 'listen'
-      ]
-    }
-
-    send action, 'configure', {facts, d20}
-    send renderer, 'configure', {facts, style: 'classic'}
-    send d20, 'configure', {facts}
-
-core.call $sys, 'setup'
-
-setupWorld = ->
-  core.call facts, 'assert', ['$tavern', 'type', 'location']
-  core.call facts, 'assert', ['$tavern', 'name', 'The Rusty Flagon']
-  core.call facts, 'assert', ['$tavern', 'description', 'A dimly lit tavern with low wooden beams and the smell of ale']
-  core.call facts, 'assert', ['$tavern', 'north', '$street']
-
-  core.call facts, 'assert', ['$street', 'type', 'location']
-  core.call facts, 'assert', ['$street', 'name', 'Cobblestone Street']
-  core.call facts, 'assert', ['$street', 'description', 'A narrow street between timber-framed buildings']
-  core.call facts, 'assert', ['$street', 'south', '$tavern']
-  core.call facts, 'assert', ['$street', 'east', '$alley']
-
-  core.call facts, 'assert', ['$alley', 'type', 'location']
-  core.call facts, 'assert', ['$alley', 'name', 'Dark Alley']
-  core.call facts, 'assert', ['$alley', 'description', 'A shadowy passage between buildings, refuse piled against the walls']
-  core.call facts, 'assert', ['$alley', 'west', '$street']
-
-  core.call facts, 'assert', ['$player', 'type', 'creature']
-  core.call facts, 'assert', ['$player', 'name', 'adventurer']
-  core.call facts, 'assert', ['$player', 'location', '$tavern']
-  core.call facts, 'set', ['$player', 'str', '14']
-  core.call facts, 'set', ['$player', 'dex', '12']
-  core.call facts, 'set', ['$player', 'con', '13']
-  core.call facts, 'set', ['$player', 'int', '10']
-  core.call facts, 'set', ['$player', 'wis', '11']
-  core.call facts, 'set', ['$player', 'cha', '10']
-  core.call facts, 'set', ['$player', 'level', '2']
-  core.call facts, 'set', ['$player', 'hp', '18']
-  core.call facts, 'set', ['$player', 'max_hp', '18']
-  core.call facts, 'set', ['$player', 'ac', '14']
-  core.call facts, 'assert', ['$player', 'proficiency', 'perception']
-  core.call facts, 'assert', ['$player', 'proficiency', 'athletics']
-  core.call facts, 'assert', ['$player', 'proficiency', 'martial_weapons']
-
-  core.call facts, 'assert', ['$dagger', 'type', 'weapon']
-  core.call facts, 'assert', ['$dagger', 'name', 'rusty dagger']
-  core.call facts, 'assert', ['$dagger', 'portable', 'true']
-  core.call facts, 'set', ['$dagger', 'damage', '1d4']
-  core.call facts, 'set', ['$dagger', 'damage_type', 'piercing']
-  core.call facts, 'assert', ['$dagger', 'property', 'finesse']
-  core.call facts, 'assert', ['$dagger', 'location', '$tavern']
-
-  core.call facts, 'assert', ['$mug', 'type', 'item']
-  core.call facts, 'assert', ['$mug', 'name', 'half-empty mug of ale']
-  core.call facts, 'assert', ['$mug', 'portable', 'true']
-  core.call facts, 'assert', ['$mug', 'location', '$tavern']
-
-  core.call facts, 'assert', ['$barkeep', 'type', 'creature']
-  core.call facts, 'assert', ['$barkeep', 'name', 'gruff barkeep']
-  core.call facts, 'assert', ['$barkeep', 'location', '$tavern']
-  core.call facts, 'set', ['$barkeep', 'str', '14']
-  core.call facts, 'set', ['$barkeep', 'dex', '10']
-  core.call facts, 'set', ['$barkeep', 'con', '12']
-  core.call facts, 'set', ['$barkeep', 'int', '10']
-  core.call facts, 'set', ['$barkeep', 'wis', '12']
-  core.call facts, 'set', ['$barkeep', 'cha', '8']
-  core.call facts, 'set', ['$barkeep', 'hp', '22']
-  core.call facts, 'set', ['$barkeep', 'max_hp', '22']
-  core.call facts, 'set', ['$barkeep', 'ac', '10']
-  core.call facts, 'set', ['$barkeep', 'level', '2']
-
-  core.call facts, 'assert', ['$thug', 'type', 'creature']
-  core.call facts, 'assert', ['$thug', 'name', 'hooded thug']
-  core.call facts, 'assert', ['$thug', 'hostile', 'true']
-  core.call facts, 'assert', ['$thug', 'location', '$alley']
-  core.call facts, 'set', ['$thug', 'str', '15']
-  core.call facts, 'set', ['$thug', 'dex', '12']
-  core.call facts, 'set', ['$thug', 'con', '12']
-  core.call facts, 'set', ['$thug', 'int', '9']
-  core.call facts, 'set', ['$thug', 'wis', '10']
-  core.call facts, 'set', ['$thug', 'cha', '9']
-  core.call facts, 'set', ['$thug', 'hp', '15']
-  core.call facts, 'set', ['$thug', 'max_hp', '15']
-  core.call facts, 'set', ['$thug', 'ac', '12']
-  core.call facts, 'set', ['$thug', 'level', '2']
-
-  core.call facts, 'assert', ['$club', 'type', 'weapon']
-  core.call facts, 'assert', ['$club', 'name', 'heavy club']
-  core.call facts, 'set', ['$club', 'damage', '1d6']
-  core.call facts, 'set', ['$club', 'damage_type', 'bludgeoning']
-  core.call facts, 'assert', ['$club', 'held_by', '$thug']
-
-  core.call facts, 'assert', ['$pouch', 'type', 'container']
-  core.call facts, 'assert', ['$pouch', 'name', 'leather pouch']
-  core.call facts, 'assert', ['$pouch', 'portable', 'true']
-  core.call facts, 'assert', ['$pouch', 'location', '$alley']
-
-  core.call facts, 'assert', ['$coins', 'type', 'treasure']
-  core.call facts, 'assert', ['$coins', 'name', 'handful of gold coins']
-  core.call facts, 'assert', ['$coins', 'portable', 'true']
-  core.call facts, 'assert', ['$coins', 'inside', '$pouch']
-
-setupWorld()
+MudGame  = require '../lib/mud-game'
 
 rl = readline.createInterface
   input: process.stdin
   output: process.stdout
 
-waiting = false
 inputQueue = []
+nextEntityId = 100
 
-print = (text) ->
-  console.log text
+sessionsDir = path.join __dirname, '../sessions'
+fs.mkdirSync sessionsDir, {recursive: true}
+timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+logFile = path.join sessionsDir, "#{timestamp}.jsonl"
+
+spinner = do ->
+  frames = [' ', '.', 'o', 'O', 'o', '.']
+  index = 0
+  interval = null
+
+  start: ->
+    index = 0
+    interval = setInterval (->
+      process.stdout.write "\r#{frames[index]}"
+      index = (index + 1) % frames.length
+    ), 150
+
+  stop: ->
+    if interval?
+      clearInterval interval
+      interval = null
+      process.stdout.write "\r \r"
+
+print = (text) -> console.log text
 
 printNarrative = (text) ->
   console.log ""
@@ -178,12 +44,42 @@ printNarrative = (text) ->
   console.log "─".repeat 60
   console.log ""
 
+game = new MudGame
+  logFile: logFile
+
+  onNarrative: (text) ->
+    spinner.stop()
+    printNarrative text
+
+  onError: (error) ->
+    spinner.stop()
+    if error is 'system_down'
+      print ""
+      print "┌─────────────────────────────────────────┐"
+      print "│       The system... is down.            │"
+      print "└─────────────────────────────────────────┘"
+      print ""
+    else if error is 'not_understood'
+      print "\nI don't understand that."
+    else
+      print "\n⚠ #{error}"
+
+  onReady: ->
+    processQueue()
+
+  onLook: ->
+    spinner.stop()
+    describeRoom()
+
+worldFile = process.argv[2] ? path.join(__dirname, '../worlds/tavern.coffee')
+game.loadWorld worldFile
+
 describeRoom = ->
-  location = core.call facts, 'get', ['$player', 'location']
+  location = game.getPlayerLocation()
   return print "You are nowhere." unless location?
 
-  name = core.call facts, 'get', [location, 'name']
-  desc = core.call facts, 'get', [location, 'description']
+  name = game.getFact location, 'name'
+  desc = game.getFact location, 'description'
 
   print ""
   print "═".repeat 60
@@ -192,34 +88,35 @@ describeRoom = ->
   print ""
   print desc if desc?
 
-  things = core.call facts, 'subjects_where', ['location', location]
+  things = game.getEntitiesAt location
   items = things.filter (t) ->
     t isnt '$player' and
-    core.call(facts, 'get', [t, 'type']) in ['item', 'weapon', 'container', 'treasure']
+    game.getFact(t, 'type') in ['item', 'weapon', 'container', 'treasure']
 
   creatures = things.filter (t) ->
     t isnt '$player' and
-    core.call(facts, 'get', [t, 'type']) is 'creature'
+    game.getFact(t, 'type') is 'creature'
 
   if items.length > 0
     print ""
     print "You see:"
     for item in items
-      itemName = core.call facts, 'get', [item, 'name']
+      itemName = game.getFact item, 'name'
       print "  - #{itemName ? item}"
 
   if creatures.length > 0
     print ""
     print "Present:"
     for creature in creatures
-      creatureName = core.call facts, 'get', [creature, 'name']
-      hostile = core.call facts, 'has', [creature, 'hostile', 'true']
+      creatureName = game.getFact creature, 'name'
+      hostileFacts = game.getFactsAbout creature
+      hostile = hostileFacts.some (f) -> f.predicate is 'hostile' and f.object is 'true'
       suffix = if hostile then " [hostile]" else ""
       print "  - #{creatureName ? creature}#{suffix}"
 
   exits = []
   for dir in ['north', 'south', 'east', 'west', 'up', 'down']
-    dest = core.call facts, 'get', [location, dir]
+    dest = game.getFact location, dir
     exits.push dir if dest?
 
   if exits.length > 0
@@ -229,62 +126,272 @@ describeRoom = ->
   print ""
 
 showStats = ->
-  hp     = core.call facts, 'get', ['$player', 'hp']
-  max_hp = core.call facts, 'get', ['$player', 'max_hp']
-  ac     = core.call facts, 'get', ['$player', 'ac']
+  hp     = game.getFact '$player', 'hp'
+  max_hp = game.getFact '$player', 'max_hp'
+  ac     = game.getFact '$player', 'ac'
 
-  inventory = core.call facts, 'subjects_where', ['location', '$player']
-  held      = core.call facts, 'subjects_where', ['held_by', '$player']
-  items     = [...new Set([...inventory, ...held])]
+  inventory = game.getEntitiesAt '$player'
+  heldFacts = game.getFactsAbout '$player'
+  held = heldFacts.filter((f) -> f.predicate is 'held_by').map((f) -> f.subject)
+  items = [...new Set([...inventory, ...held])]
 
   print ""
   print "HP: #{hp}/#{max_hp}  AC: #{ac}"
   if items.length > 0
-    itemNames = items.map (i) -> core.call facts, 'get', [i, 'name']
+    itemNames = items.map (i) -> game.getFact i, 'name'
     print "Carrying: #{itemNames.join ', '}"
   print ""
 
-narrativeHandler = core.create $root
-core.addMethod narrativeHandler, 'receive_narrative', ->
-  (ctx, args) ->
-    [narrative] = args
-    printNarrative narrative.text
-    waiting = false
-    processQueue()
+resolveEntity = (name) ->
+  return name if not name or name.startsWith '$'
+  return '$player' if name is 'me'
+  return game.getPlayerLocation() if name is 'here'
+  "$#{name}"
 
-resultHandler = core.create $root
-core.addMethod resultHandler, 'action_completed', (send) ->
-  (ctx, args) ->
-    [result] = args
-    send renderer, 'render', result, result.subject
+creativeCommands =
+  inspect:
+    help: """
+      /inspect <entity>
 
-core.call renderer, 'configure', [{narrative_handler: narrativeHandler}]
-core.call action, 'configure', [{result_handler: resultHandler}]
+      Shows all raw facts about an entity. The $ prefix is optional.
 
-intentHandler = core.create $root
-core.addMethod intentHandler, 'receive_intent', (send) ->
-  (ctx, args) ->
-    [intent, subject] = args
+      Examples:
+        /inspect player     - show player stats and properties
+        /inspect $tavern    - show room facts
+        /inspect dagger     - show item properties
+    """
+    impl: (parts) ->
+      target = parts[1]
+      return print "Usage: /inspect <entity>" unless target?
 
-    if intent.type is 'unknown'
-      print "\nI don't understand that."
-      waiting = false
-      processQueue()
-      return
+      target = resolveEntity target
+      target_facts = game.getFactsAbout target
 
-    if intent.verb is 'look' and not intent.object? and not intent.target?
-      describeRoom()
-      waiting = false
-      processQueue()
-      return
+      if target_facts.length is 0
+        return print "\nNo facts found for #{target}"
 
-    send action, 'execute', intent, subject
+      print "\n=== #{target} ==="
+      for fact in target_facts
+        print "  #{fact.subject} #{fact.predicate} #{fact.object}"
+      print ""
 
-core.call parser, 'configure', [{intent_handler: intentHandler}]
+  create:
+    help: """
+      /create <type> <name or args>
+
+      Types:
+        room <name>              - create a disconnected room
+        exit <dir> <destination> - create bidirectional exit
+        npc <name>               - create creature in current room
+        item <name>              - create portable item here
+        weapon <name>            - create weapon here (1d6 slashing default)
+
+      Examples:
+        /create room Dark Cavern
+        /create exit north $room_100
+        /create npc grumpy wizard
+        /create item silver key
+        /create weapon enchanted sword
+
+      After creating a room, use /create exit to connect it.
+    """
+    impl: (parts) ->
+      subcommand = parts[1]
+      return print "Usage: /create <room|npc|item|weapon|exit> <name>" unless subcommand
+
+      location = game.getPlayerLocation()
+      facts = game.facts
+      core = game.core
+
+      switch subcommand
+        when 'room'
+          name = parts.slice(2).join(' ')
+          return print "Usage: /create room <name>" unless name
+          entityId = "$room_#{nextEntityId++}"
+          core.call facts, 'assert', [entityId, 'type', 'location']
+          core.call facts, 'assert', [entityId, 'name', name]
+          print "\nCreated room #{entityId} \"#{name}\""
+          print "Use /create exit <direction> #{entityId} to connect it"
+
+        when 'npc'
+          name = parts.slice(2).join(' ')
+          return print "Usage: /create npc <name>" unless name
+          entityId = "$npc_#{nextEntityId++}"
+          core.call facts, 'assert', [entityId, 'type', 'creature']
+          core.call facts, 'assert', [entityId, 'name', name]
+          core.call facts, 'assert', [entityId, 'location', location]
+          for prop in ['hp', 'max_hp', 'ac', 'level']
+            core.call facts, 'set', [entityId, prop, '10']
+          print "\nCreated NPC #{entityId} \"#{name}\" in current room"
+
+        when 'item'
+          name = parts.slice(2).join(' ')
+          return print "Usage: /create item <name>" unless name
+          entityId = "$item_#{nextEntityId++}"
+          core.call facts, 'assert', [entityId, 'type', 'item']
+          core.call facts, 'assert', [entityId, 'name', name]
+          core.call facts, 'assert', [entityId, 'portable', 'true']
+          core.call facts, 'assert', [entityId, 'location', location]
+          print "\nCreated item #{entityId} \"#{name}\" in current room"
+
+        when 'weapon'
+          name = parts.slice(2).join(' ')
+          return print "Usage: /create weapon <name>" unless name
+          entityId = "$weapon_#{nextEntityId++}"
+          core.call facts, 'assert', [entityId, 'type', 'weapon']
+          core.call facts, 'assert', [entityId, 'name', name]
+          core.call facts, 'assert', [entityId, 'portable', 'true']
+          core.call facts, 'assert', [entityId, 'location', location]
+          core.call facts, 'set', [entityId, 'damage', '1d6']
+          core.call facts, 'set', [entityId, 'damage_type', 'slashing']
+          print "\nCreated weapon #{entityId} \"#{name}\" (1d6 slashing)"
+          print "Use /set #{entityId} damage <dice> to change damage"
+
+        when 'exit'
+          direction = parts[2]
+          destination = parts[3]
+          return print "Usage: /create exit <direction> <destination>" unless direction and destination
+          destination = resolveEntity destination
+          core.call facts, 'assert', [location, direction, destination]
+          print "\nCreated exit #{direction} from #{location} to #{destination}"
+
+          opposite = {north: 'south', south: 'north', east: 'west', west: 'east', up: 'down', down: 'up'}[direction]
+          if opposite?
+            core.call facts, 'assert', [destination, opposite, location]
+            print "Created return exit #{opposite} from #{destination} to #{location}"
+
+        else
+          print "Unknown create type: #{subcommand}"
+          print "Valid types: room, npc, item, weapon, exit"
+
+  set:
+    help: """
+      /set <entity> <property> <value>
+
+      Sets a property on an entity. The $ prefix is optional.
+
+      Common properties:
+        name, description, type, location
+        hp, max_hp, ac, level (for creatures)
+        str, dex, con, int, wis, cha (ability scores)
+        damage, damage_type (for weapons)
+        hostile (true/false for NPCs)
+        portable (true/false for items)
+
+      Examples:
+        /set wizard hp 50
+        /set sword damage 2d6
+        /set sword damage_type fire
+        /set thug hostile true
+    """
+    impl: (parts) ->
+      entity = parts[1]
+      prop = parts[2]
+      value = parts.slice(3).join(' ')
+      return print "Usage: /set <entity> <property> <value>" unless entity and prop and value
+
+      entity = resolveEntity entity
+      game.core.call game.facts, 'set', [entity, prop, value]
+      print "\nSet #{entity}.#{prop} = #{value}"
+
+  describe:
+    help: """
+      /describe <entity> <description text>
+
+      Sets the description shown when examining something.
+
+      Examples:
+        /describe tavern A cozy tavern with a roaring fireplace.
+        /describe sword The blade glows with an eerie blue light.
+    """
+    impl: (parts) ->
+      entity = parts[1]
+      description = parts.slice(2).join(' ')
+      return print "Usage: /describe <entity> <description text>" unless entity and description
+
+      entity = resolveEntity entity
+      game.core.call game.facts, 'set', [entity, 'description', description]
+      print "\nSet description for #{entity}"
+
+  delete:
+    help: """
+      /delete <entity>
+
+      Removes an entity and all its facts from the world.
+
+      Examples:
+        /delete npc_100
+        /delete $item_101
+
+      Warning: This cannot be undone!
+    """
+    impl: (parts) ->
+      entity = parts[1]
+      return print "Usage: /delete <entity>" unless entity
+
+      entity = resolveEntity entity
+      entity_facts = game.getFactsAbout entity
+
+      if entity_facts.length is 0
+        return print "\nNo entity #{entity} found"
+
+      for fact in entity_facts
+        game.core.call game.facts, 'retract', [fact.subject, fact.predicate, fact.object]
+
+      print "\nDeleted #{entity} (#{entity_facts.length} facts removed)"
+
+  facts:
+    help: """
+      /facts
+
+      Dumps all facts in the world as subject-predicate-object triples.
+      Useful for debugging and understanding world state.
+    """
+    impl: (parts) ->
+      print "\n=== World State ==="
+      print game.core.call game.facts, 'dump'
+      print ""
+
+  help:
+    help: """
+      /help [command]
+
+      Shows help for creative mode commands.
+      Use /help <command> for detailed help on a specific command.
+    """
+    impl: (parts) ->
+      topic = parts[1]
+
+      unless topic
+        print "\n  Creative Mode Commands:"
+        for name, cmd of creativeCommands
+          continue if name is 'help'
+          firstLine = cmd.help.trim().split('\n')[0]
+          print "    #{firstLine}"
+        print "\n  Use /help <command> for detailed help.\n"
+        return
+
+      if creativeCommands[topic]?
+        print "\n#{creativeCommands[topic].help}\n"
+      else
+        print "\nNo help available for '#{topic}'"
+        print "Available: #{Object.keys(creativeCommands).join ', '}"
+
+handleCreativeCommand = (cmd) ->
+  parts = cmd.split /\s+/
+  command = parts[0]
+
+  if creativeCommands[command]?
+    creativeCommands[command].impl parts
+  else
+    print "Unknown creative command: /#{command}"
+    print "Try /help for available commands"
 
 processQueue = ->
-  return if waiting
-  return if inputQueue.length is 0
+  return if game.isWaiting()
+  if inputQueue.length is 0
+    prompt()
+    return
 
   input = inputQueue.shift()
 
@@ -294,7 +401,7 @@ processQueue = ->
 
   if input is 'stats' or input is 'status'
     showStats()
-    prompt()
+    processQueue()
     return
 
   if input is 'help'
@@ -309,22 +416,25 @@ processQueue = ->
       attack <who>  - attack a creature
       talk <who>    - talk to someone
       stats         - show your status
-      facts         - dump world state (debug)
       quit          - leave the game
 
+    Creative Mode: type /help for world-building commands.
+
     """
-    prompt()
+    processQueue()
     return
 
-  if input is 'facts'
-    print "\n=== World State ==="
-    print core.call facts, 'dump'
-    print ""
-    prompt()
+  if input.startsWith '/'
+    handleCreativeCommand input.slice(1)
+    processQueue()
     return
 
-  waiting = true
-  core.call parser, 'parse', [input, '$player']
+  # Quote shorthand: "hello" -> say "hello"
+  if match = input.match /^"(.*)$/
+    input = "say \"#{match[1]}"
+
+  spinner.start()
+  game.processInput input
 
 prompt = ->
   rl.question '> ', (input) ->
@@ -342,6 +452,7 @@ print """
 ╚══════════════════════════════════════════════════════════════╝
 
 Type 'help' for commands, 'quit' to exit.
+Session log: #{logFile}
 
 """
 

@@ -19,11 +19,12 @@ object $renderer
 parent $root
 
 method init_renderer
-  vars facts, pending_result, pending_subject, style, narrative_handler
+  vars facts, pending_result, pending_subject, pending_context, style, narrative_handler
 
   facts             = null
   pending_result    = null
   pending_subject   = null
+  pending_context   = {}
   style             = 'classic'
   narrative_handler = null
 
@@ -37,14 +38,15 @@ method configure
 
 method render
   using llm_complete, send
-  vars facts, pending_result, pending_subject
-  args result, subject
+  vars facts, pending_result, pending_subject, pending_context
+  args result, subject, gameContext = {}
 
   pending_result  = result
   pending_subject = subject
+  pending_context = gameContext
 
   context = @gather_context result, subject
-  prompt  = @build_prompt result, context
+  prompt  = @build_prompt result, context, gameContext
 
   llm_complete {prompt}
 
@@ -96,22 +98,33 @@ method gather_context
 
 method build_prompt
   vars style
-  args result, context
+  args result, context, gameContext = {}
 
   lines = []
 
-  lines.push "You are a narrator for a text adventure game."
-  lines.push "Write evocative, second-person prose describing what just happened."
-  lines.push ""
+  [
+    "You are a narrator for a text adventure game."
+    "Write evocative, second-person prose describing what just happened."
+    ""
+  ].forEach (line) -> lines.push line
 
-  if style is 'classic'
-    lines.push "Style: Classic interactive fiction (Infocom-era). Concise but atmospheric."
-  else if style is 'verbose'
-    lines.push "Style: Richly detailed literary prose. Describe senses and emotions."
-  else if style is 'terse'
-    lines.push "Style: Extremely brief. Just the essential facts."
-  else
-    lines.push "Style: #{style}"
+  if gameContext.transcript?.length > 0
+    lines.push "Recent narrative (maintain continuity, avoid repetition):"
+    for entry in gameContext.transcript
+      lines.push "> #{entry.input}"
+      lines.push "  #{entry.output.split('\n')[0]}..."
+    lines.push ""
+
+  styleDesc =
+    if style is 'classic'
+      "Style: Classic interactive fiction (Infocom-era). Concise but atmospheric."
+    else if style is 'verbose'
+      "Style: Richly detailed literary prose. Describe senses and emotions."
+    else if style is 'terse'
+      "Style: Extremely brief. Just the essential facts."
+    else
+      "Style: #{style}"
+  lines.push styleDesc
 
   lines.push ""
   lines.push "About the player:"
@@ -136,10 +149,12 @@ method build_prompt
       for fact in entity.facts
         lines.push "    #{fact}"
 
-  lines.push ""
-  lines.push "What happened:"
-  lines.push "  Success: #{result.success}"
-  lines.push "  Description: #{result.description}"
+  [
+    ""
+    "What happened:"
+    "  Success: #{result.success}"
+    "  Description: #{result.description}"
+  ].forEach (line) -> lines.push line
 
   if result.operations?.length > 0
     lines.push "  Changes made:"
@@ -156,49 +171,86 @@ method build_prompt
   if result.intent?
     lines.push ""
     lines.push "The player's intent was: #{result.intent.verb}"
-    if result.intent.object?
-      lines.push "  Object: #{result.intent.object}"
-    if result.intent.target?
-      lines.push "  Target: #{result.intent.target}"
-    if result.intent.tone?
-      lines.push "  Tone: #{result.intent.tone}"
+    lines.push "  Object: #{result.intent.object}" if result.intent.object?
+    lines.push "  Target: #{result.intent.target}" if result.intent.target?
+    lines.push "  Tone: #{result.intent.tone}" if result.intent.tone?
 
-  lines.push ""
-  lines.push "Write 1-3 sentences of narrative prose. Do not include any JSON or metadata."
-  lines.push "Use second person (\"you\"). Focus on what the player experiences."
-  lines.push ""
-  lines.push "IMPORTANT: Never speak for the player. Do not describe their emotions,"
-  lines.push "sighs, grunts, thoughts, or reactions. Only describe what happens in"
-  lines.push "the world - objects, environments, sounds, what they see or feel physically."
-  lines.push "The player decides how their character reacts."
-  lines.push ""
-  lines.push "If the action failed, describe why in a natural way."
-  lines.push "If successful, describe the result vividly but concisely."
+  [
+    ""
+    "IMPORTANT: Never speak for the player. Do not describe their emotions,"
+    "sighs, grunts, thoughts, or reactions. Only describe what happens in"
+    "the world - objects, environments, sounds, what they see or feel physically."
+    "The player decides how their character reacts."
+    ""
+    "If the action failed, describe why in a natural way."
+    "If successful, describe the result vividly but concisely."
+    ""
+    "Respond with JSON in this format:"
+    '{'
+    '  "narrative": "<1-3 sentences of second-person prose>",'
+    '  "new_facts": ['
+    '    {"s": "<subject>", "p": "<predicate>", "o": "<object>", "source": "<dialogue|observation|action>"}'
+    '  ]'
+    '}'
+    ""
+    "Include new_facts for any new information established in this interaction:"
+    "- Names learned through dialogue (source: dialogue)"
+    "- Physical details observed (source: observation)"
+    "- State changes from actions (source: action)"
+    "Use entity IDs like $barkeep, $player when known. Only include genuinely new facts."
+  ].forEach (line) -> lines.push line
 
   lines.join '\n'
 
 method completed
   using send
-  vars pending_result, pending_subject, narrative_handler
+  vars facts, pending_result, pending_subject, narrative_handler
   args response
 
   content = response.choices?[0]?.message?.content
-  text = if content?
-    t = content.trim()
-    t.replace /^["']|["']$/g, ''
-  else
-    @format_fallback pending_result
+
+  text = null
+  new_facts = []
+
+  if content?
+    parsed = @parse_response content
+    if parsed?
+      text = parsed.narrative
+      new_facts = parsed.new_facts ? []
+    else
+      text = content.trim().replace /^["']|["']$/g, ''
+
+  text ?= @format_fallback pending_result
+
+  if new_facts.length > 0 and facts?
+    for fact in new_facts
+      continue unless fact.s? and fact.p? and fact.o?
+      send facts, 'set', fact.s, fact.p, fact.o
 
   narrative = {
-    text:    text
-    result:  pending_result
-    subject: pending_subject
+    text:      text
+    result:    pending_result
+    subject:   pending_subject
+    new_facts: new_facts
   }
 
   if narrative_handler?
     send narrative_handler, 'receive_narrative', narrative
 
   narrative
+
+method parse_response
+  args content
+
+  return null unless content?
+
+  try
+    if match = content.match /\{[\s\S]*\}/
+      JSON.parse match[0]
+    else
+      null
+  catch e
+    null
 
 method error
   using send
@@ -298,22 +350,24 @@ method build_room_prompt
 
   lines = []
 
-  lines.push "You are a narrator for a text adventure game."
-  lines.push "Describe the current location in second person."
-  lines.push ""
+  [
+    "You are a narrator for a text adventure game."
+    "Describe the current location in second person."
+    ""
+  ].forEach (line) -> lines.push line
 
-  if style is 'classic'
-    lines.push "Style: Classic interactive fiction. A short title, then 2-4 sentences."
-  else if style is 'verbose'
-    lines.push "Style: Rich and atmospheric. 3-6 sentences with sensory details."
-  else
-    lines.push "Style: #{style ? 'classic'}"
+  styleDesc =
+    if style is 'classic'
+      "Style: Classic interactive fiction. A short title, then 2-4 sentences."
+    else if style is 'verbose'
+      "Style: Rich and atmospheric. 3-6 sentences with sensory details."
+    else
+      "Style: #{style ? 'classic'}"
+  lines.push styleDesc
 
   lines.push ""
   lines.push "Location: #{context.location_name ? context.location}"
-
-  if context.location_desc?
-    lines.push "Base description: #{context.location_desc}"
+  lines.push "Base description: #{context.location_desc}" if context.location_desc?
 
   if context.contents.length > 0
     lines.push ""
@@ -329,13 +383,15 @@ method build_room_prompt
     for exit in context.exits
       lines.push "  - #{exit.direction} -> #{exit.destination}"
 
-  lines.push ""
-  lines.push "Write the room description. Start with the location name in bold or caps."
-  lines.push "Describe what the player sees, including notable objects."
-  lines.push "Mention obvious exits naturally in the prose."
-  lines.push ""
-  lines.push "Never speak for the player - no emotions, thoughts, or reactions."
-  lines.push "Only describe the environment and what can be perceived."
+  [
+    ""
+    "Write the room description. Start with the location name in bold or caps."
+    "Describe what the player sees, including notable objects."
+    "Mention obvious exits naturally in the prose."
+    ""
+    "Never speak for the player - no emotions, thoughts, or reactions."
+    "Only describe the environment and what can be perceived."
+  ].forEach (line) -> lines.push line
 
   lines.join '\n'
 

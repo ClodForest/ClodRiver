@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ClodRiver is a modern MUD (Multi-User Dungeon) server written in Node.js/CoffeeScript that integrates Large Language Models for natural language parsing, dynamic world building, and intelligent NPC behavior. The project takes inspiration from ColdMUD's elegant design while leveraging modern JavaScript/CoffeeScript capabilities.
 
-**Current Status:** Object model v4.0 implemented and tested - Core, CoreObject, CoreMethod, and ExecutionContext classes fully functional. Modular core loading BIFs added for package/module systems. Extended .clod format with `object $name`, `parent $name`, and `default_parent`. 134 tests passing.
+**Current Status:** Object model v4.0 implemented and tested - Core, CoreObject, CoreMethod, and ExecutionContext classes fully functional. Modular core loading BIFs added for package/module systems. Extended .clod format with `object $name`, `parent $name`, and `default_parent`. Semantic MUD architecture with LLM-powered parser, action interpreter, and renderer. 164 tests passing.
 
 ## Language and Style
 
@@ -611,3 +611,188 @@ Part of ClodForest ecosystem:
 - **Agent Calico** - Multi-agent orchestration
 
 ClodRiver revives ColdMUD's elegance with modern LLM integration for natural language parsing, dynamic world building, and intelligent NPCs.
+
+## Semantic MUD Architecture
+
+The MUD uses a semantic architecture where meaning lives in the LLM layer, not hardcoded in the server. The server only knows primitives (facts, dice rolls); the LLM handles semantics.
+
+### Pipeline
+
+```
+User Input → Parser → Action Interpreter → Renderer → Narrative Output
+     ↓           ↓              ↓               ↓
+  "attack    {verb:attack,   [d20 ops,      "Your sword
+   goblin"   object:goblin}   fact changes]   bites deep..."
+```
+
+### Core Modules (clod/core/)
+
+- **facts/** - Triple store `(subject, predicate, object)` for world state
+- **intent/** - LLM parses natural language → structured intents
+- **action/** - LLM translates intents → primitive operations (facts, d20, movement)
+- **render/** - LLM converts action results → narrative prose + new_facts
+- **d20/** - 5e-style mechanics (dice, checks, saves, attacks, conditions)
+
+### MudGame Class (lib/mud-game.coffee)
+
+Encapsulates a game session:
+
+```coffee
+MudGame = require './lib/mud-game'
+
+game = new MudGame
+  logFile: 'sessions/mysession.jsonl'  # Session logging
+  llmConfig: {baseURL: '...', model: '...'}
+  onNarrative: (text) -> console.log text
+  onError: (error) -> console.error error
+  onReady: -> prompt()
+  onLook: -> describeRoom()
+
+game.loadWorld 'worlds/tavern.coffee'
+game.processInput 'attack the goblin'
+```
+
+Key methods:
+- `processInput(text)` - Send player input through the pipeline
+- `getFact(subject, predicate)` - Query world state
+- `getFactsAbout(entity)` - Get all facts about an entity
+- `getEntitiesAt(location)` - Get things at a location
+- `getPlayerLocation()` - Shorthand for player's location
+
+### Session Logging
+
+Sessions are logged to `sessions/<timestamp>.jsonl` as JSONL:
+
+```jsonl
+{"type":"session_start","timestamp":"...","llmConfig":{...}}
+{"type":"world_loaded","worldPath":"..."}
+{"type":"input","input":"say hello"}
+{"type":"intent","input":"...","intent":{verb:"talk",...}}
+{"type":"action","result":{success:true,operations:[...],...}}
+{"type":"narrative","input":"...","text":"...","new_facts":[...]}
+```
+
+Use `@sessions/filename.jsonl` in Claude Code to reference session logs.
+
+### World Files (worlds/)
+
+Worlds are CoffeeScript that populates the fact store:
+
+```coffee
+# worlds/tavern.coffee
+module.exports = (facts, core) ->
+  room = (id, name, description, exits = {}) ->
+    core.call facts, 'assert', [id, 'type', 'location']
+    core.call facts, 'assert', [id, 'name', name]
+    # ...
+
+  creature = (id, name, location, stats = {}) ->
+    # ...
+
+  room '$tavern', 'The Rusty Flagon', 'A dimly lit tavern...', {north: '$street'}
+  creature '$barkeep', 'gruff barkeep', '$tavern', {str: 14, cha: 8}
+```
+
+### CLI (bin/play.coffee)
+
+Thin wrapper around MudGame:
+- Readline for input
+- Spinner while waiting for LLM
+- Creative mode commands (`/inspect`, `/create`, `/set`, `/delete`, `/facts`)
+- Quote shorthand: `"hello"` → `say "hello"`
+
+### Transcript Context
+
+All three LLM components receive recent conversation history:
+- Parser uses it to understand pronouns ("ask him about...")
+- Action interpreter uses it for context
+- Renderer uses it to maintain continuity and avoid repetition
+
+```coffee
+transcript = [
+  {input: "talk to barkeep", output: "The barkeep nods..."}
+  {input: "ask about work", output: "..."}
+]
+```
+
+### Fact Persistence from Dialogue
+
+The renderer returns `new_facts` alongside narrative:
+
+```json
+{
+  "narrative": "The barkeep says, 'Name's Grimgar.'",
+  "new_facts": [
+    {"s": "$barkeep", "p": "known_as", "o": "Grimgar", "source": "dialogue"}
+  ]
+}
+```
+
+These facts persist so the world remembers what was established.
+
+### Development Workflow
+
+1. Run `./bin/play.coffee` to test interactively
+2. Try commands, observe behavior
+3. Check session log for pipeline debugging:
+   - `intent` shows what parser understood
+   - `action` shows what operations were generated
+   - `narrative` shows final output and new facts
+4. Adjust prompts in `clod/core/*/index.clod` as needed
+5. Iterate until behavior matches expectations
+
+### Key Files for MUD Development
+
+```
+bin/play.coffee           # CLI entry point
+lib/mud-game.coffee       # Game session class
+lib/bifs.coffee           # LLM BIFs (connect_llm, llm_complete)
+clod/core/facts/          # Triple store
+clod/core/intent/         # Parser (NL → intent)
+clod/core/action/         # Solver (intent → operations)
+clod/core/render/         # Narrator (results → prose)
+clod/core/d20/            # Game mechanics
+worlds/tavern.coffee      # Default world
+sessions/                 # Session logs (gitignored: no, check in interesting ones)
+```
+
+### LLM Configuration
+
+Default LLM endpoint from environment or defaults:
+- `LLM_URL` - Base URL (default: `http://localhost:11435/v1`)
+- `LLM_MODEL` - Model name (default: local model)
+
+Uses OpenAI-compatible API (works with ollama, llama.cpp, etc).
+
+### Think Tag Handling
+
+Some models (like Precog) emit `<think>...</think>` blocks for reasoning. These are stripped before JSON parsing in both the intent parser and action interpreter to prevent parse errors (think blocks often contain unescaped newlines).
+
+The `strip_think_tags` method in both modules:
+```coffee
+text?.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim()
+```
+
+The renderer's narrative output is also stripped in `lib/mud-game.coffee`.
+
+**Known Issue:** Local models occasionally produce malformed JSON (extra quotes, unescaped characters) which causes parse failures. When this happens, the action result shows `success: false` with the raw LLM output in the `raw` field. The renderer then has to work without the intended operations/description, often resulting in missing NPC dialogue or invented scene-setting.
+
+### Code Style for Prompt Building
+
+When building prompts with many static lines, use the array forEach pattern instead of repeated push calls:
+
+```coffee
+# Good - grouped by logical section
+[
+  "You are a narrator for a text adventure game."
+  "Write evocative, second-person prose."
+  ""
+].forEach (line) -> lines.push line
+
+# Bad - repetitive individual calls
+lines.push "You are a narrator for a text adventure game."
+lines.push "Write evocative, second-person prose."
+lines.push ""
+```
+
+This keeps related content together and makes prompts easier to read and modify.
