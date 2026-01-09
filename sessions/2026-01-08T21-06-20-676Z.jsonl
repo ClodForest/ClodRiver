@@ -1,2 +1,0 @@
-{"type":"session_start","timestamp":"2026-01-08T21:06:20.677Z","llmConfig":{"baseURL":"http://localhost:11435/v1","model":"hf.co/bartowski/TheDrummer_Precog-24B-v1-GGUF:Q6_K_L"}}
-{"type":"world_loaded","worldPath":"/Users/robert/git/github/ClodForest/ClodRiver/worlds/tavern.coffee","timestamp":"2026-01-08T21:06:20.829Z"}
