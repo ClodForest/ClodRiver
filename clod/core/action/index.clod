@@ -54,7 +54,12 @@ method execute
     console.log prompt
     console.log "=== End Prompt ===\n"
 
-  llm_complete {prompt}
+  options = {prompt}
+  if process.env.DEBUG_LOGPROBS
+    options.logprobs = true
+    options.top_logprobs = 5
+
+  llm_complete options
 
 method set_debug
   vars debug
@@ -168,12 +173,15 @@ method build_prompt
     ""
     "Translate this into primitive operations. Use the resolved entity IDs (like $sword, $player) in your operations."
     ""
-    "Available operations:"
+    "Available operations (use EXACT syntax shown):"
     ""
-    "Fact operations:"
+    "Fact operations (MUST use s, p, o fields):"
     '- {"op": "assert", "s": "<subject>", "p": "<predicate>", "o": "<object>"}'
     '- {"op": "retract", "s": "<subject>", "p": "<predicate>", "o": "<object>"}'
     '- {"op": "set", "s": "<subject>", "p": "<predicate>", "o": "<object>"}  (replaces any existing value)'
+    ""
+    "WRONG: {\"op\": \"assert\", \"$player type creature\"}"
+    "RIGHT: {\"op\": \"assert\", \"s\": \"$player\", \"p\": \"type\", \"o\": \"creature\"}"
     ""
     "D20 operations (5e-style mechanics):"
     '- {"op": "check", "entity": "<who>", "skill": "<skill>", "dc": <number>}  - skill check'
@@ -191,20 +199,21 @@ method build_prompt
     '- {"op": "describe", "target": "<entity or direction>"}  - describe what the subject sees'
     ""
     "Dialogue (talk/say/ask intents):"
-    "For conversation, use assert/set to record what was said and learned:"
+    "For conversation, the intent will include a 'content' field with what the player said."
+    "Use assert/set to record what was said and learned:"
     '- {"op": "set", "s": "<speaker>", "p": "said", "o": "<what they said>"}'
     '- {"op": "set", "s": "<speaker>", "p": "told_name", "o": "<name they gave>"}'
     '- {"op": "set", "s": "<entity>", "p": "known_as", "o": "<name learned>"}'
     '- {"op": "set", "s": "<entity>", "p": "mood", "o": "<friendly/hostile/neutral/etc>"}'
-    "When an NPC is asked something, INVENT a reasonable response based on their personality."
+    "When an NPC is asked something, INVENT a reasonable response based on their personality and world context."
     "Record any new information as facts (names, relationships, rumors, quests, etc)."
-    "The description field MUST include the NPC's actual spoken response."
+    "The description field MUST include both what the player said AND the NPC's spoken response."
     ""
-    "Example for 'say hello to barkeep':"
+    "Example for intent {verb: 'say', content: 'hello', object: 'barkeep'}:"
     '{"success": true, "operations": ['
     '  {"op": "set", "s": "$player", "p": "said", "o": "hello"},'
     '  {"op": "set", "s": "$barkeep", "p": "said", "o": "Well met, traveler. What can I get ya?"}'
-    '], "description": "You greet the barkeep. He looks up from his mug-polishing and replies, \\"Well met, traveler. What can I get ya?\\""}'
+    '], "description": "You say, \\"Hello.\\" The barkeep looks up from his mug-polishing and replies, \\"Well met, traveler. What can I get ya?\\""}'
     ""
     "Control flow:"
     '- {"op": "fail", "reason": "<why this cannot be done>"}'
@@ -226,8 +235,28 @@ method build_prompt
     "- 'examine <thing>' means look at a specific object or creature for details."
     "- Looking does NOT cause movement. Only 'go' causes movement."
     ""
-    "Respond with ONLY a JSON object:"
-    '{"success": true/false, "operations": [...], "description": "<what happened>"}'
+    "Journey completion:"
+    "- When the player wants to travel somewhere, COMPLETE THE JOURNEY in this action if the path is clear."
+    "- You may create intermediate locations (roads, passages, transitions) as needed for realism."
+    "- Wire up exits between all locations you create (use assert for bidirectional connections)."
+    "- Move the player through ALL intermediate locations to reach their destination."
+    "- Do not leave the player stranded mid-journey unless something blocks them (combat, locked door, etc)."
+    "- For vague commands like 'walk around' or 'explore', limit scope to the current area to avoid excessive world generation."
+    ""
+    "World building:"
+    "- You can create new locations on the fly when the player travels somewhere that doesn't exist yet."
+    "- Give new locations reasonable IDs (like $guild_road, $forest_path) and basic facts (type: location)."
+    "- The renderer will handle describing these new places based on context."
+    "- Existing locations should be preferred - check known facts before inventing new places."
+    ""
+    "First, think through what operations are needed and what happened."
+    "Then respond with YAML (no markdown, no code fences):"
+    'success: true/false'
+    'operations:'
+    '  - op: ...'
+    'description: <what happened>'
+    ""
+    "<think>"
   ].forEach (line) -> lines.push line
 
   lines.join '\n'
@@ -274,30 +303,43 @@ method stream
   args chunk
 
 method parse_response
+  using yaml_load
   args content
 
   return {success: false, error: 'empty response', operations: []} unless content?
 
   try
-    cleaned = @strip_think_tags content
-    jsonStr = @extract_json cleaned
-    JSON.parse jsonStr
+    result = @strip_metadata_tags content
+    if result.tags.length > 0
+      console.log "[Action] Stripped metadata tags:", JSON.stringify(result.tags, null, 2)
+
+    yamlStr = @extract_yaml result.cleaned
+    yaml_load yamlStr
 
   catch e
     {success: false, error: "parse error: #{e.message}", operations: [], raw: content}
 
-method strip_think_tags
+method strip_metadata_tags
   args text
 
-  text?.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim()
+  return {cleaned: text, tags: []} unless text?
 
-method extract_json
+  tags = []
+  cleaned = text
+
+  tagPattern = /<(\w+)>([\s\S]*?)<\/\1\s*>/gi
+  cleaned = cleaned.replace tagPattern, (match, tagName, content) ->
+    tags.push {tag: tagName, content: content.trim()}
+    ''
+
+  {cleaned: cleaned.trim(), tags}
+
+method extract_yaml
   args text
 
-  if match = text.match /\{[\s\S]*\}/
-    match[0]
-  else
-    text
+  cleaned = text.replace(/```(?:yaml|json)?\s*/g, '')
+  cleaned = cleaned.replace(/<\?yaml\s*/gi, '')
+  cleaned.trim()
 
 method execute_operations
   using send

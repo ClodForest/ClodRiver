@@ -695,11 +695,32 @@ module.exports = (facts, core) ->
 
 ### CLI (bin/play.coffee)
 
-Thin wrapper around MudGame:
-- Readline for input
-- Spinner while waiting for LLM
-- Creative mode commands (`/inspect`, `/create`, `/set`, `/delete`, `/facts`)
-- Quote shorthand: `"hello"` → `say "hello"`
+Thin wrapper around MudGame with three command namespaces:
+
+**Regular commands (in-character):**
+- Go through full LLM pipeline (parser → action → renderer)
+- Can trigger NPC reactions and world events
+- Examples: `look`, `attack goblin`, `walk to guild`
+
+**Bracket commands (out-of-character, instant):**
+- `[look` - Show cached room description
+- `[facts <entity>` - Query fact store
+- `[inventory` or `[inv` - Show what you're carrying
+- `[stats` - Show character stats
+- `[recall <topic>` - Search conversation history
+- `[help` - Show OOC commands
+
+**Slash commands (creative/dev mode):**
+- `/inspect <entity>` - Show all raw facts
+- `/create <type> <name>` - Create rooms, NPCs, items, weapons, exits
+- `/set <entity> <property> <value>` - Set properties
+- `/describe <entity> <text>` - Set descriptions
+- `/delete <entity>` - Remove entity and facts
+- `/facts` - Dump all world facts
+- `/help` - Show creative commands
+
+**Shortcuts:**
+- `"hello"` → `say "hello"` (quote shorthand)
 
 ### Transcript Context
 
@@ -764,18 +785,38 @@ Default LLM endpoint from environment or defaults:
 
 Uses OpenAI-compatible API (works with ollama, llama.cpp, etc).
 
-### Think Tag Handling
+### LLM Output Format - YAML not JSON
 
-Some models (like Precog) emit `<think>...</think>` blocks for reasoning. These are stripped before JSON parsing in both the intent parser and action interpreter to prevent parse errors (think blocks often contain unescaped newlines).
+All three LLM components (intent parser, action interpreter, renderer) output **YAML** instead of JSON. YAML is more forgiving (allows trailing commas), more readable, and less prone to generation errors.
 
-The `strip_think_tags` method in both modules:
+Each component uses `yaml_load` from the `js-yaml` library to parse responses.
+
+### Metadata Tag Handling
+
+Models like Precog-24B emit reasoning in `<think>...</think>` tags. All three components use a **generic tag stripper** that removes ANY XML-style tags before YAML parsing:
+
 ```coffee
-text?.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim()
+method strip_metadata_tags
+  args text
+
+  tags = []
+  cleaned = text
+
+  tagPattern = /<(\w+)>([\s\S]*?)<\/\1\s*>/gi
+  cleaned = cleaned.replace tagPattern, (match, tagName, content) ->
+    tags.push {tag: tagName, content: content.trim()}
+    ''
+
+  {cleaned: cleaned.trim(), tags}
 ```
 
-The renderer's narrative output is also stripped in `lib/mud-game.coffee`.
+Tags are logged for debugging. Common tags:
+- `<think>` - Model reasoning (intended behavior for Precog)
+- `<nink>` - Hallucination due to tokenization (`<n` token exists from HTML tags like `<nav>`)
 
-**Known Issue:** Local models occasionally produce malformed JSON (extra quotes, unescaped characters) which causes parse failures. When this happens, the action result shows `success: false` with the raw LLM output in the `raw` field. The renderer then has to work without the intended operations/description, often resulting in missing NPC dialogue or invented scene-setting.
+Prompts seed with `<think>` to guide the model toward completing thinking before outputting YAML, but tokenization ambiguity occasionally produces `<nink>` instead.
+
+The renderer's narrative output is also stripped of think tags in `lib/mud-game.coffee`.
 
 ### Code Style for Prompt Building
 
@@ -796,3 +837,24 @@ lines.push ""
 ```
 
 This keeps related content together and makes prompts easier to read and modify.
+
+### Baseline LLM Guidance
+
+The core prompts include sensible defaults that work without additional configuration. These can be overridden later by character cards or world settings.
+
+**Action Interpreter guidance:**
+- **Journey completion**: When player travels somewhere, complete the journey in one action if path is clear
+- **Intermediate locations**: May create roads, passages, transitions for realism
+- **Wire up exits**: Connect all created locations with bidirectional exits
+- **Don't strand mid-journey**: Move player all the way to destination unless blocked
+- **Scope limiting**: Vague commands like "walk around" stay in current area to prevent excessive world generation
+- **World building**: Can create new locations on the fly with reasonable IDs and basic facts
+- **Prefer existing**: Check known facts before inventing new places
+
+**Renderer guidance:**
+- **Perspective**: Player moves through world, not vice versa ("You arrive at the guild" not "The guild arrives")
+- **Don't speak for player**: No emotions, thoughts, reactions - only describe the world
+- **Active agent**: Player is the mover, locations are stationary
+
+**Intent Parser:**
+- **Auto-fill subject**: If LLM omits `subject` field, automatically fills from `pending_subject` to prevent validation errors

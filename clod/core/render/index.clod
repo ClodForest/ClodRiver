@@ -48,7 +48,12 @@ method render
   context = @gather_context result, subject
   prompt  = @build_prompt result, context, gameContext
 
-  llm_complete {prompt}
+  options = {prompt}
+  if process.env.DEBUG_LOGPROBS
+    options.logprobs = true
+    options.top_logprobs = 5
+
+  llm_complete options
 
 method gather_context
   using send
@@ -182,22 +187,30 @@ method build_prompt
     "the world - objects, environments, sounds, what they see or feel physically."
     "The player decides how their character reacts."
     ""
+    "PERSPECTIVE: The player moves through the world. The world does not move to the player."
+    "- Correct: 'You arrive at the guild' or 'You reach the crossroads'"
+    "- Wrong: 'The guild arrives' or 'The crossroads has arrived'"
+    "- The player is the active agent. Locations and objects are stationary unless explicitly moving."
+    ""
     "If the action failed, describe why in a natural way."
     "If successful, describe the result vividly but concisely."
     ""
-    "Respond with JSON in this format:"
-    '{'
-    '  "narrative": "<1-3 sentences of second-person prose>",'
-    '  "new_facts": ['
-    '    {"s": "<subject>", "p": "<predicate>", "o": "<object>", "source": "<dialogue|observation|action>"}'
-    '  ]'
-    '}'
+    "First, think through the narrative and facts you want to establish."
+    "Then respond with YAML (no markdown, no code fences):"
+    'narrative: <1-3 sentences of second-person prose>'
+    'new_facts:'
+    '  - s: <subject>'
+    '    p: <predicate>'
+    '    o: <object>'
+    '    source: <dialogue|observation|action>'
     ""
     "Include new_facts for any new information established in this interaction:"
     "- Names learned through dialogue (source: dialogue)"
     "- Physical details observed (source: observation)"
     "- State changes from actions (source: action)"
     "Use entity IDs like $barkeep, $player when known. Only include genuinely new facts."
+    ""
+    "<think>"
   ].forEach (line) -> lines.push line
 
   lines.join '\n'
@@ -206,6 +219,9 @@ method completed
   using send
   vars facts, pending_result, pending_subject, narrative_handler
   args response
+
+  if process.env.DEBUG_LOGPROBS and response.choices?[0]?.logprobs?
+    console.log "[Renderer] Logprobs:", JSON.stringify(response.choices[0].logprobs, null, 2)
 
   content = response.choices?[0]?.message?.content
 
@@ -240,17 +256,38 @@ method completed
   narrative
 
 method parse_response
+  using yaml_load
   args content
 
   return null unless content?
 
   try
-    if match = content.match /\{[\s\S]*\}/
-      JSON.parse match[0]
-    else
-      null
+    result = @strip_metadata_tags content
+    if result.tags.length > 0
+      console.log "[Renderer] Stripped metadata tags:", JSON.stringify(result.tags, null, 2)
+
+    cleaned = result.cleaned.replace(/```(?:yaml|json)?\s*/g, '')
+    cleaned = cleaned.replace(/<\?yaml\s*/gi, '')
+    cleaned = cleaned.trim()
+
+    yaml_load cleaned
   catch e
     null
+
+method strip_metadata_tags
+  args text
+
+  return {cleaned: text, tags: []} unless text?
+
+  tags = []
+  cleaned = text
+
+  tagPattern = /<(\w+)>([\s\S]*?)<\/\1\s*>/gi
+  cleaned = cleaned.replace tagPattern, (match, tagName, content) ->
+    tags.push {tag: tagName, content: content.trim()}
+    ''
+
+  {cleaned: cleaned.trim(), tags}
 
 method error
   using send

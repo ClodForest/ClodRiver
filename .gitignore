@@ -2,6 +2,15 @@
 .sw?
 .*.sw?
 
+# CoffeeScript compiled output
+bin/*.js
+lib/*.js
+clod/**/*.js
+
+# Test/debug artifacts
+tmp/
+probs.json
+
 # Logs
 logs
 *.log

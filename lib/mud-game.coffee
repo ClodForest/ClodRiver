@@ -1,5 +1,6 @@
 fs       = require 'node:fs'
 path     = require 'node:path'
+yaml     = require 'js-yaml'
 Core     = require './core'
 TextDump = require './text-dump'
 
@@ -7,7 +8,7 @@ class MudGame
   constructor: (options = {}) ->
     @core = new Core()
     @llmConfig = options.llmConfig ? {
-      baseURL: process.env.LLM_URL   ? 'http://localhost:11435/v1'
+      baseURL: process.env.LLM_URL   ? 'http://localhost:11434/v1'
       model:   process.env.LLM_MODEL ? 'hf.co/bartowski/TheDrummer_Precog-24B-v1-GGUF:Q6_K_L'
     }
 
@@ -17,8 +18,8 @@ class MudGame
     @waiting = false
 
     @onNarrative = options.onNarrative ? (text) ->
-    @onError = options.onError ? (error) ->
-    @onReady = options.onReady ? ->
+    @onError     = options.onError     ? (error) ->
+    @onReady     = options.onReady     ? ->
 
     @_setupLogging options.logFile
     @_setupCore()
@@ -34,8 +35,8 @@ class MudGame
   _log: (entry) ->
     return unless @logFile?
     entry.timestamp ?= new Date().toISOString()
-    line = JSON.stringify(entry) + '\n'
-    fs.appendFileSync @logFile, line
+    yamlDoc = yaml.dump entry, {lineWidth: 120, noRefs: true}
+    fs.appendFileSync @logFile, "---\n#{yamlDoc}"
 
   _setupCore: ->
     $sys  = @core.toobj '$sys'
@@ -88,14 +89,6 @@ class MudGame
         connect_llm @action, @llmConfig
         connect_llm @renderer, @llmConfig
 
-        send @parser, 'configure', {
-          available_verbs: [
-            'look', 'examine', 'take', 'drop', 'go', 'open', 'close',
-            'attack', 'cast', 'use', 'give', 'put', 'talk', 'search',
-            'hide', 'sneak', 'climb', 'jump', 'push', 'pull', 'listen'
-          ]
-        }
-
         send @action, 'configure', {facts: @facts, d20: @d20}
         send @renderer, 'configure', {facts: @facts, style: 'classic'}
         send @d20, 'configure', {facts: @facts}
@@ -133,6 +126,16 @@ class MudGame
         [result, gameContext] = args
         gameContext ?= {}
         @_log {type: 'action', result}
+
+        if not result.success and result.error?
+          if result.error.includes('parse error')
+            @onError "Action parsing failed: #{result.error}"
+            @_addToTranscript @pendingInput, "[Parse error]" if @pendingInput?
+            @pendingInput = null
+            @waiting = false
+            @onReady()
+            return
+
         send @renderer, 'render', result, result.subject, gameContext
 
     @core.call @renderer, 'configure', [{narrative_handler: @narrativeHandler}]
@@ -156,14 +159,6 @@ class MudGame
             @_addToTranscript @pendingInput, "[Not understood]" if @pendingInput?
           @pendingInput = null
           @waiting = false
-          @onReady()
-          return
-
-        if intent.verb is 'look' and not intent.object? and not intent.target?
-          @_addToTranscript @pendingInput, "[Looked around]" if @pendingInput?
-          @pendingInput = null
-          @waiting = false
-          @onLook?()
           @onReady()
           return
 

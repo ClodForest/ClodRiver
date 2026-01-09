@@ -15,7 +15,7 @@ nextEntityId = 100
 sessionsDir = path.join __dirname, '../sessions'
 fs.mkdirSync sessionsDir, {recursive: true}
 timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-logFile = path.join sessionsDir, "#{timestamp}.jsonl"
+logFile = path.join sessionsDir, "#{timestamp}.yaml"
 
 spinner = do ->
   frames = [' ', '.', 'o', 'O', 'o', '.']
@@ -66,10 +66,6 @@ game = new MudGame
 
   onReady: ->
     processQueue()
-
-  onLook: ->
-    spinner.stop()
-    describeRoom()
 
 worldFile = process.argv[2] ? path.join(__dirname, '../worlds/tavern.coffee')
 game.loadWorld worldFile
@@ -147,6 +143,141 @@ resolveEntity = (name) ->
   return '$player' if name is 'me'
   return game.getPlayerLocation() if name is 'here'
   "$#{name}"
+
+oocCommands =
+  look:
+    help: """
+      [look
+
+      Show what you already know about your current location (instant, cached).
+      Use plain 'look' (without bracket) to actively examine your surroundings,
+      which goes through the game engine and may trigger reactions.
+    """
+    impl: (parts) ->
+      describeRoom()
+
+  facts:
+    help: """
+      [facts <entity>
+
+      Query all known facts about an entity. Same as /inspect but in OOC mode.
+      The $ prefix is optional.
+
+      Examples:
+        [facts barkeep      - show what you know about the barkeep
+        [facts $tavern      - show room facts
+        [facts me           - show player facts
+    """
+    impl: (parts) ->
+      target = parts[1]
+      return print "Usage: [facts <entity>" unless target?
+
+      target = resolveEntity target
+      target_facts = game.getFactsAbout target
+
+      if target_facts.length is 0
+        return print "\nNo facts found for #{target}"
+
+      print "\n=== #{target} ==="
+      for fact in target_facts
+        print "  #{fact.subject} #{fact.predicate} #{fact.object}"
+      print ""
+
+  inventory:
+    help: """
+      [inventory  (or [inv)
+
+      Show what you're carrying (instant, cached).
+    """
+    impl: (parts) ->
+      inventory = game.getEntitiesAt '$player'
+      heldFacts = game.getFactsAbout '$player'
+      held = heldFacts.filter((f) -> f.predicate is 'held_by').map((f) -> f.subject)
+      items = [...new Set([...inventory, ...held])]
+
+      print ""
+      if items.length is 0
+        print "You're not carrying anything."
+      else
+        print "Carrying:"
+        for item in items
+          itemName = game.getFact item, 'name'
+          print "  - #{itemName ? item}"
+      print ""
+
+  stats:
+    help: """
+      [stats
+
+      Show your character stats (instant, cached).
+    """
+    impl: (parts) ->
+      showStats()
+
+  recall:
+    help: """
+      [recall <topic>
+
+      Search conversation history for mentions of a topic.
+
+      Examples:
+        [recall hemlock     - find all mentions of "hemlock"
+        [recall training    - find conversations about training
+    """
+    impl: (parts) ->
+      topic = parts.slice(1).join(' ')
+      return print "Usage: [recall <topic>" unless topic
+
+      matches = game.transcript.filter (entry) ->
+        entry.input.toLowerCase().includes(topic.toLowerCase()) or
+        entry.output.toLowerCase().includes(topic.toLowerCase())
+
+      if matches.length is 0
+        print "\nNo conversations found mentioning '#{topic}'"
+        return
+
+      print "\n=== Recalling: #{topic} ==="
+      for entry in matches
+        print "> #{entry.input}"
+        print "  #{entry.output.split('\n')[0]}..."
+        print ""
+
+  help:
+    help: """
+      [help
+
+      Show available OOC (out-of-character) commands.
+      OOC commands are instant queries that don't affect the game world.
+    """
+    impl: (parts) ->
+      topic = parts[1]
+
+      unless topic
+        print "\n  OOC Commands (instant queries, don't affect game world):"
+        for name, cmd of oocCommands
+          continue if name is 'help'
+          firstLine = cmd.help.trim().split('\n')[0]
+          print "    #{firstLine}"
+        print "\n  Use [help <command> for detailed help.\n"
+        return
+
+      if oocCommands[topic]?
+        print "\n#{oocCommands[topic].help}\n"
+      else
+        print "\nNo help available for '#{topic}'"
+        print "Available: #{Object.keys(oocCommands).join ', '}"
+
+oocCommands.inv = oocCommands.inventory  # Alias
+
+handleOOCCommand = (cmd) ->
+  parts = cmd.split /\s+/
+  command = parts[0]
+
+  if oocCommands[command]?
+    oocCommands[command].impl parts
+  else
+    print "Unknown OOC command: [#{command}"
+    print "Try [help for available commands"
 
 creativeCommands =
   inspect:
@@ -418,9 +549,15 @@ processQueue = ->
       stats         - show your status
       quit          - leave the game
 
+    OOC Mode: type [help for instant queries (don't affect game world).
     Creative Mode: type /help for world-building commands.
 
     """
+    processQueue()
+    return
+
+  if input.startsWith '['
+    handleOOCCommand input.slice(1)
     processQueue()
     return
 
@@ -447,8 +584,8 @@ prompt = ->
 print """
 
 ╔══════════════════════════════════════════════════════════════╗
-║                      CLODMUD                                  ║
-║              A semantic adventure game                        ║
+║                      CLODMUD                                 ║
+║              A semantic adventure game                       ║
 ╚══════════════════════════════════════════════════════════════╝
 
 Type 'help' for commands, 'quit' to exit.

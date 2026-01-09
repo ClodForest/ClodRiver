@@ -164,13 +164,15 @@ method parse
   pending_context = context
   prompt = @build_prompt input, subject, context
 
-  llm_complete {prompt}
+  options = {prompt}
+  if process.env.DEBUG_LOGPROBS
+    options.logprobs = true
+    options.top_logprobs = 5
+
+  llm_complete options
 
 method build_prompt
-  vars available_verbs
   args input, subject, context = {}
-
-  verbList = available_verbs.join ', '
 
   transcriptSection = ""
   if context.transcript?.length > 0
@@ -185,7 +187,9 @@ method build_prompt
   You are a command interpreter for a text adventure game.
   Parse the player's input into a structured intent.
 
-  Available verbs: #{verbList}
+  Extract the verb from the player's natural language. Use your knowledge of
+  how verbs work in English and in game contexts. The verb should capture
+  what the player wants to DO.
   #{transcriptSection}
   The player (#{subject}) now says: "#{input}"
 
@@ -193,51 +197,73 @@ method build_prompt
   talking to someone and says something like "ask him about X" or "say hello",
   the target is the person they were talking to.
 
-  Respond with ONLY valid JSON in this format:
-  {
-    "type": "intent",
-    "verb": "<verb>",
-    "subject": "#{subject}",
-    "object": "<object name or null>",
-    "target": "<target name or null>",
-    "confidence": <0.0-1.0>,
-    "tone": "<neutral|urgent|casual|polite|aggressive>"
-  }
+  For dialogue (say/ask/tell/speak), extract the actual words from quotes or text.
+  Examples:
+  - 'say "hello"' -> content: "hello"
+  - 'ask barkeep about rumors' -> content: "rumors", object: "barkeep"
+  - 'tell guard my name is Jack' -> content: "my name is Jack", object: "guard"
+
+  First, think through what the player wants to do.
+  Then respond with YAML (no markdown, no code fences) in this format:
+  type: intent
+  verb: <verb>
+  subject: #{subject}
+  object: <object name or null>
+  target: <target name or null>
+  content: <quoted text or topic for dialogue verbs>
+  confidence: <0.0-1.0>
+  tone: <neutral|urgent|casual|polite|aggressive>
 
   For multiple actions use:
-  {
-    "type": "sequence",
-    "intents": [...]
-  }
+  type: sequence
+  intents:
+    - type: intent
+      verb: <verb>
+      ...
 
   For conditional actions ("try X, otherwise Y") use:
-  {
-    "type": "conditional",
-    "try": {...},
-    "else": {...}
-  }
+  type: conditional
+  try:
+    type: intent
+    ...
+  else:
+    type: intent
+    ...
 
   If you cannot parse the input, respond with:
-  {
-    "type": "unknown",
-    "raw": "#{input}",
-    "reason": "<explanation>",
-    "confidence": 0.0
-  }
+  type: unknown
+  raw: #{input}
+  reason: <explanation>
+  confidence: 0.0
+
+  <think>
   """
 
 method handle_response
+  using yaml_load
+  vars pending_subject
   args response
 
   try
     content = response.choices?[0]?.message?.content
     return $intent.create_unknown content, 'empty response' unless content?
 
-    cleaned = @strip_think_tags content
-    jsonStr = @extract_json cleaned
-    intent  = JSON.parse jsonStr
+    result = @strip_metadata_tags content
+    if result.tags.length > 0
+      console.log "[Intent] Stripped metadata tags:", JSON.stringify(result.tags, null, 2)
+
+    cleaned = @extract_yaml result.cleaned
+    intent  = yaml_load cleaned
 
     intent = @normalize_intent intent
+
+    # Fill in missing subject if LLM forgot to include it
+    if intent.type is 'intent' and not intent.subject?
+      intent.subject = pending_subject
+
+    if intent.type is 'sequence'
+      for sub in intent.intents ? []
+        sub.subject ?= pending_subject if sub.type is 'intent'
 
     result = $intent.validate intent
     return $intent.create_unknown content, result.error unless result.valid
@@ -247,10 +273,20 @@ method handle_response
   catch e
     $intent.create_unknown response, "parse error: #{e.message}"
 
-method strip_think_tags
+method strip_metadata_tags
   args text
 
-  text?.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim()
+  return {cleaned: text, tags: []} unless text?
+
+  tags = []
+  cleaned = text
+
+  tagPattern = /<(\w+)>([\s\S]*?)<\/\1\s*>/gi
+  cleaned = cleaned.replace tagPattern, (match, tagName, content) ->
+    tags.push {tag: tagName, content: content.trim()}
+    ''
+
+  {cleaned: cleaned.trim(), tags}
 
 method normalize_intent
   args intent
@@ -275,13 +311,12 @@ method normalize_intent
 
   intent
 
-method extract_json
+method extract_yaml
   args text
 
-  if match = text.match /\{[\s\S]*\}/
-    match[0]
-  else
-    text
+  cleaned = text.replace(/```(?:yaml|json)?\s*/g, '')
+  cleaned = cleaned.replace(/<\?yaml\s*/gi, '')
+  cleaned.trim()
 
 method completed
   using send

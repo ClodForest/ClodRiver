@@ -2,6 +2,7 @@
 # These are made available to methods through the import mechanism
 
 CoffeeScript = require 'coffeescript'
+yaml         = require 'js-yaml'
 CoreMethod   = require './core-method'
 CoreObject   = require './core-object'
 TextDump     = require './text-dump'
@@ -36,6 +37,12 @@ class BIFs
   tostr: (value) =>
     return String(value) unless value?._id?
     "##{value._id}"
+
+  yaml_load: (text) =>
+    yaml.load text
+
+  yaml_dump: (data) =>
+    yaml.dump data, {lineWidth: 120, noRefs: true}
 
   # XXX: possible scaling hotspot on large DBs?
   children: (ctx, obj = null) =>
@@ -360,6 +367,8 @@ class BIFs
     }
     body.tools       = options.tools       if options.tools?
     body.temperature = options.temperature if options.temperature?
+    body.logprobs    = options.logprobs    if options.logprobs?
+    body.top_logprobs = options.top_logprobs if options.top_logprobs?
 
     headers = {'Content-Type': 'application/json'}
     headers['Authorization'] = "Bearer #{config.apiKey}" if config.apiKey

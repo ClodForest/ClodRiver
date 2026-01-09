@@ -1,0 +1,186 @@
+---
+type: session_start
+timestamp: '2026-01-09T04:38:22.910Z'
+llmConfig:
+  baseURL: http://localhost:11434/v1
+  model: hf.co/bartowski/TheDrummer_Precog-24B-v1-GGUF:Q6_K_L
+---
+type: world_loaded
+worldPath: /mnt/nvme0n1p4/git/github/ClodForest/ClodRiver/worlds/tavern.coffee
+timestamp: '2026-01-09T04:38:23.536Z'
+---
+type: input
+input: ask the barkeep for directions to the nearest adventurer's guild
+timestamp: '2026-01-09T04:39:13.031Z'
+---
+type: intent
+input: ask the barkeep for directions to the nearest adventurer's guild
+intent:
+  type: intent
+  verb: ask
+  subject: $player
+  object: guildeventures
+  target: barkeep
+  content: directions to the nearest adventurer's guild
+  confidence: 1
+  tone: casual
+timestamp: '2026-01-09T04:39:14.456Z'
+---
+type: action
+result:
+  success: true
+  operations:
+    - op: set
+      s: $player
+      p: said
+      o: directions to the nearest adventurer's guild
+    - op: set
+      s: $barkeep
+      p: said
+      o: >-
+        Head east out of the tavern. Just follow the cobblestone path for about a mile, and you'll see the banner
+        hanging over the doorway. The main entrance is on your right.
+    - op: set
+      s: $player
+      p: known_as
+      o: adventurer
+    - op: set
+      s: $barkeep
+      p: mood
+      o: neutral
+  description: >-
+    You ask the gruff barkeep, "directions to the nearest adventurer's guild," in a casual tone. He grunts and points
+    with his chin toward the east wall. "Head east out of the tavern. Just follow the cobblestone path for about a mile,
+    and you'll see the banner hanging over the doorway. The main entrance is on your right."
+  intent:
+    type: intent
+    verb: ask
+    subject: $player
+    object: guildeventures
+    target: barkeep
+    content: directions to the nearest adventurer's guild
+    confidence: 1
+    tone: casual
+  subject: $player
+timestamp: '2026-01-09T04:39:20.445Z'
+---
+type: narrative
+input: ask the barkeep for directions to the nearest adventurer's guild
+text: >-
+  You ask the gruff barkeep for directions to the adventurer's guild. He grunts and points eastward, giving you clear
+  instructions.
+new_facts:
+  - s: $player
+    p: said
+    o: directions to the nearest adventurer's guild
+    source: action
+  - s: $barkeep
+    p: said
+    o: >-
+      Head east out of the tavern. Just follow the cobblestone path for about a mile, and you'll see the banner hanging
+      over the doorway. The main entrance is on your right.
+    source: dialogue
+timestamp: '2026-01-09T04:39:23.372Z'
+---
+type: input
+input: say "thanks" and walk to the guild
+timestamp: '2026-01-09T04:40:00.584Z'
+---
+type: intent
+input: say "thanks" and walk to the guild
+intent:
+  type: sequence
+  intents:
+    - type: intent
+      verb: speak
+      subject: $player
+      object: null
+      target: null
+      content: thanks
+      confidence: 0.95
+      tone: casual
+    - type: intent
+      verb: travel
+      subject: $player
+      object: guild
+      target: null
+      content: null
+      confidence: 0.95
+      tone: neutral
+timestamp: '2026-01-09T04:40:02.866Z'
+---
+type: action
+result:
+  success: true
+  operations:
+    - op: set
+      s: $player
+      p: said
+      o: thanks
+    - op: assert
+      s: $barkeep
+      p: location
+      o: $tavern
+    - op: assert
+      s: $tavern
+      p: contains
+      o: $barkeep
+    - op: assert
+      s: $barkeep
+      p: mood
+      o: friendly
+    - op: set
+      s: $barkeep
+      p: said
+      o: You're welcome. Safe travels.
+    - op: move
+      entity: $player
+      direction: east
+  description: >-
+    You thank the barkeep, who grunts in a less-gruff manner and says, "You're welcome. Safe travels." You begin walking
+    eastward, following his directions away from the tavern.
+  intent:
+    type: sequence
+    intents:
+      - type: intent
+        verb: speak
+        subject: $player
+        object: null
+        target: null
+        content: thanks
+        confidence: 0.95
+        tone: casual
+      - type: intent
+        verb: travel
+        subject: $player
+        object: guild
+        target: null
+        content: null
+        confidence: 0.95
+        tone: neutral
+  subject: $player
+timestamp: '2026-01-09T04:40:07.264Z'
+---
+type: narrative
+input: say "thanks" and walk to the guild
+text: >-
+  YAML
+
+  narrative: The barkeep's gruff features soften slightly as he replies, "You're welcome. Safe travels." You turn and
+  step out of the warm tavern, the cool night air washing over you as you head east down the cobblestone street.
+
+  new_facts:
+    - s: $player
+      p: said
+      o: thanks
+      source: action
+    - s: $barkeep
+      p: mood
+      o: friendly
+      source: observation
+    - s: $barkeep
+      p: location
+      o: $tavern
+      source: observation
+new_facts: []
+timestamp: '2026-01-09T04:40:10.220Z'
